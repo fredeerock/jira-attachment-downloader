@@ -128,6 +128,64 @@ input[readonly] { color: var(--muted); }
 .folder-row { display: flex; gap: 8px; }
 .folder-row input { flex: 1; }
 
+.inline-btn { margin-bottom: 8px; }
+.inline-status { display: inline-block; margin: 0 0 8px 10px; vertical-align: middle; }
+
+.projects-panel {
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.5);
+  padding: 10px;
+  margin-bottom: 14px;
+}
+.project-filter {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--card-border);
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  margin-bottom: 8px;
+}
+.project-filter:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+.projects-list {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.project-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.project-item:hover { background: rgba(148, 163, 184, 0.12); }
+.project-item input { width: 15px; height: 15px; accent-color: var(--accent); flex: none; }
+.project-item .pkey {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #a5b4fc;
+  font-size: 12px;
+  flex: none;
+}
+.project-item .pname {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.projects-empty { padding: 10px 8px; color: var(--muted); font-size: 13px; }
+
 .date-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

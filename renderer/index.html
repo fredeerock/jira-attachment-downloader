@@ -56,8 +56,16 @@
         <label class="field">
           <span>Project key(s)</span>
           <input id="project" type="text" placeholder="e.g. ABC  or  ABC, DEV, OPS" autocomplete="off" />
-          <small class="hint">Separate multiple projects with commas or spaces.</small>
+          <small class="hint">Type keys, or pick from your project list below.</small>
         </label>
+
+        <button id="loadProjectsBtn" class="btn ghost small inline-btn">Load my projects</button>
+        <span id="projectsStatus" class="status-line inline-status"></span>
+
+        <div id="projectsPanel" class="projects-panel hidden">
+          <input id="projectFilter" type="text" class="project-filter" placeholder="Filter projects…" autocomplete="off" />
+          <div id="projectsList" class="projects-list"></div>
+        </div>
 
         <div class="date-row">
           <label class="field">

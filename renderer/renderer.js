@@ -5,6 +5,11 @@ const els = {
   email: $('email'),
   token: $('token'),
   project: $('project'),
+  loadProjectsBtn: $('loadProjectsBtn'),
+  projectsStatus: $('projectsStatus'),
+  projectsPanel: $('projectsPanel'),
+  projectFilter: $('projectFilter'),
+  projectsList: $('projectsList'),
   dateFrom: $('dateFrom'),
   dateTo: $('dateTo'),
   folder: $('folder'),
@@ -104,6 +109,97 @@ els.folderBtn.addEventListener('click', async () => {
     els.folder.value = folder;
     saveSettings();
   }
+});
+
+// ---- Project list ----
+let loadedProjects = [];
+
+function getSelectedKeys() {
+  return els.project.value
+    .split(/[\s,]+/)
+    .map((k) => k.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function setSelectedKeys(keys) {
+  const unique = [...new Set(keys)];
+  els.project.value = unique.join(', ');
+  saveSettings();
+}
+
+function renderProjects() {
+  const selected = new Set(getSelectedKeys());
+  const filter = els.projectFilter.value.trim().toLowerCase();
+  els.projectsList.innerHTML = '';
+
+  const filtered = loadedProjects.filter((p) =>
+    !filter ||
+    p.key.toLowerCase().includes(filter) ||
+    (p.name || '').toLowerCase().includes(filter)
+  );
+
+  if (!filtered.length) {
+    const empty = document.createElement('div');
+    empty.className = 'projects-empty';
+    empty.textContent = loadedProjects.length ? 'No projects match your filter.' : 'No projects found.';
+    els.projectsList.appendChild(empty);
+    return;
+  }
+
+  filtered.forEach((p) => {
+    const label = document.createElement('label');
+    label.className = 'project-item';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = selected.has(p.key.toUpperCase());
+    cb.addEventListener('change', () => {
+      const keys = new Set(getSelectedKeys());
+      if (cb.checked) keys.add(p.key.toUpperCase());
+      else keys.delete(p.key.toUpperCase());
+      setSelectedKeys([...keys]);
+    });
+
+    const key = document.createElement('span');
+    key.className = 'pkey';
+    key.textContent = p.key;
+
+    const name = document.createElement('span');
+    name.className = 'pname';
+    name.textContent = p.name || '';
+
+    label.append(cb, key, name);
+    els.projectsList.appendChild(label);
+  });
+}
+
+els.loadProjectsBtn.addEventListener('click', async () => {
+  els.projectsStatus.className = 'status-line inline-status load';
+  els.projectsStatus.textContent = 'Loading…';
+  els.loadProjectsBtn.disabled = true;
+  try {
+    const result = await window.api.listProjects(creds());
+    if (result.ok) {
+      loadedProjects = result.projects || [];
+      els.projectsStatus.className = 'status-line inline-status ok';
+      els.projectsStatus.textContent = `${loadedProjects.length} project(s) found`;
+      els.projectsPanel.classList.remove('hidden');
+      renderProjects();
+    } else {
+      els.projectsStatus.className = 'status-line inline-status err';
+      els.projectsStatus.textContent = result.error;
+    }
+  } catch (err) {
+    els.projectsStatus.className = 'status-line inline-status err';
+    els.projectsStatus.textContent = err.message;
+  } finally {
+    els.loadProjectsBtn.disabled = false;
+  }
+});
+
+els.projectFilter.addEventListener('input', renderProjects);
+els.project.addEventListener('input', () => {
+  if (loadedProjects.length) renderProjects();
 });
 
 // ---- Download ----

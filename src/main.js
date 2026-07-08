@@ -101,6 +101,50 @@ ipcMain.handle('jira:test', async (_event, { site, email, token }) => {
   }
 });
 
+// ---------- IPC: list projects ----------
+
+ipcMain.handle('jira:projects', async (_event, { site, email, token }) => {
+  const base = normalizeSite(site);
+  if (!base || !email || !token) {
+    return { ok: false, error: 'Please fill in site, email and API token.' };
+  }
+  const auth = authHeader(email, token);
+  try {
+    const projects = [];
+    let startAt = 0;
+    let isLast = false;
+    do {
+      const url = new URL(`${base}/rest/api/3/project/search`);
+      url.searchParams.set('maxResults', '50');
+      url.searchParams.set('startAt', String(startAt));
+      url.searchParams.set('orderBy', 'name');
+
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: auth, Accept: 'application/json' }
+      });
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, error: 'Authentication failed. Check your credentials.' };
+      }
+      if (!res.ok) {
+        return { ok: false, error: `Could not load projects (status ${res.status}).` };
+      }
+      const data = await res.json();
+      for (const p of data.values || []) {
+        projects.push({ key: p.key, name: p.name });
+      }
+      const batch = (data.values || []).length;
+      startAt += batch;
+      isLast = data.isLast === true || batch === 0 ||
+        (data.total != null && startAt >= data.total);
+    } while (!isLast);
+
+    projects.sort((a, b) => a.name.localeCompare(b.name));
+    return { ok: true, projects };
+  } catch (err) {
+    return { ok: false, error: `Could not reach Jira: ${err.message}` };
+  }
+});
+
 // ---------- IPC: pick / open folder ----------
 
 ipcMain.handle('jira:pickFolder', async () => {

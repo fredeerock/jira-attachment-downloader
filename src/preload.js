@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   testConnection: (creds) => ipcRenderer.invoke('jira:test', creds),
+  listProjects: (creds) => ipcRenderer.invoke('jira:projects', creds),
   pickFolder: () => ipcRenderer.invoke('jira:pickFolder'),
   startDownload: (payload) => ipcRenderer.invoke('jira:download', payload),
   cancelDownload: () => ipcRenderer.invoke('jira:cancel'),
