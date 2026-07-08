@@ -54,9 +54,22 @@
         <h2>2 · Choose project &amp; folder</h2>
 
         <label class="field">
-          <span>Project key</span>
-          <input id="project" type="text" placeholder="e.g. ABC" autocomplete="off" />
+          <span>Project key(s)</span>
+          <input id="project" type="text" placeholder="e.g. ABC  or  ABC, DEV, OPS" autocomplete="off" />
+          <small class="hint">Separate multiple projects with commas or spaces.</small>
         </label>
+
+        <div class="date-row">
+          <label class="field">
+            <span>From date <em>(optional)</em></span>
+            <input id="dateFrom" type="date" />
+          </label>
+          <label class="field">
+            <span>To date <em>(optional)</em></span>
+            <input id="dateTo" type="date" />
+          </label>
+        </div>
+        <small class="hint date-hint">Filters by the attachment's upload date. Leave blank for all dates.</small>
 
         <label class="field">
           <span>Download to</span>

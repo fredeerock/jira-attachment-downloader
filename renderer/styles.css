@@ -128,6 +128,37 @@ input[readonly] { color: var(--muted); }
 .folder-row { display: flex; gap: 8px; }
 .folder-row input { flex: 1; }
 
+.date-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.date-row .field { margin-bottom: 6px; }
+.field > span em {
+  font-style: normal;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+}
+.date-hint { margin: 0 0 14px; }
+input[type="date"] {
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: 11px;
+  border: 1px solid var(--card-border);
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  font-family: var(--font);
+  color-scheme: dark;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input[type="date"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
 .checkbox {
   display: flex;
   align-items: center;

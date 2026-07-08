@@ -9,10 +9,11 @@ for a given Jira Cloud project** into a folder of your choice.
 
 - Connect to any Jira Cloud site with your email + API token
 - Test the connection before running
-- Downloads every attachment across every issue in a project (paginated)
+- Downloads every attachment across every issue in **one or more projects** (paginated)
+- Optional **date range** filter by the attachment's upload date
 - Optionally organizes files into a subfolder per issue
 - Live progress bar, running total, and log
-- Remembers your site / email / project / folder (the API token is never stored)
+- Remembers your site / email / projects / dates / folder (the API token is never stored)
 
 ## First-time setup
 
@@ -35,11 +36,14 @@ npm start
 ## Using it
 
 1. Click **Test connection** to confirm your credentials.
-2. Enter a **Project key** (the prefix on issue IDs, e.g. `ABC` in `ABC-123`).
-3. Choose a **download folder**.
-4. Click **Download all attachments**.
+2. Enter one or more **Project keys** (the prefix on issue IDs, e.g. `ABC` in `ABC-123`). Separate multiple projects with commas or spaces, e.g. `ABC, DEV, OPS`.
+3. Optionally set a **From / To date** range to only grab attachments uploaded in that window.
+4. Choose a **download folder**.
+5. Click **Download all attachments**.
 
 Files are saved to `<folder>/<PROJECT> attachments/<ISSUE-KEY>/<filename>`.
+When downloading from multiple projects, files are grouped as
+`<folder>/Jira attachments/<PROJECT>/<ISSUE-KEY>/<filename>`.
 
 ## Building installable apps
 

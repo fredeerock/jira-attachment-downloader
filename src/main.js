@@ -139,18 +139,44 @@ ipcMain.handle('jira:download', async (event, payload) => {
   if (!outputDir) return { ok: false, error: 'Missing download folder.' };
 
   const auth = authHeader(email, token);
-  const project = projectKey.trim().toUpperCase();
 
-  const rootDir = path.join(outputDir, sanitize(`${project} attachments`));
+  // Parse one or more project keys (comma / space / newline separated).
+  const projects = [...new Set(
+    projectKey
+      .split(/[\s,]+/)
+      .map((p) => p.trim().toUpperCase())
+      .filter(Boolean)
+  )];
+  if (projects.length === 0) return { ok: false, error: 'Missing project key.' };
+
+  // Parse optional date range (YYYY-MM-DD). Range applies to attachment date.
+  const dateFrom = (payload.dateFrom || '').trim();
+  const dateTo = (payload.dateTo || '').trim();
+  const fromMs = dateFrom ? Date.parse(`${dateFrom}T00:00:00`) : null;
+  const toMs = dateTo ? Date.parse(`${dateTo}T23:59:59.999`) : null;
+  if (dateFrom && Number.isNaN(fromMs)) return { ok: false, error: 'Invalid "from" date.' };
+  if (dateTo && Number.isNaN(toMs)) return { ok: false, error: 'Invalid "to" date.' };
+  if (fromMs != null && toMs != null && fromMs > toMs) {
+    return { ok: false, error: 'The "from" date is after the "to" date.' };
+  }
+
+  const projectOf = (issueKey) => (issueKey.split('-')[0] || '').toUpperCase();
+  const label = projects.length === 1 ? projects[0] : 'Jira';
+  const rootDir = path.join(outputDir, sanitize(`${label} attachments`));
   await fsp.mkdir(rootDir, { recursive: true });
 
   try {
-    send({ type: 'status', message: `Searching issues in ${project}…` });
+    send({ type: 'status', message: `Searching issues in ${projects.join(', ')}…` });
 
     // 1. Collect all issues + attachments (paginated via enhanced JQL search).
     const issues = [];
     let nextPageToken = undefined;
-    const jql = `project = "${project}" AND attachments IS NOT EMPTY ORDER BY created ASC`;
+    const projectList = projects.map((p) => `"${p}"`).join(', ');
+    let jql = `project IN (${projectList}) AND attachments IS NOT EMPTY`;
+    // Narrow by updated date when a start date is set: an attachment created on
+    // date T means the issue was updated at or after T.
+    if (dateFrom) jql += ` AND updated >= "${dateFrom}"`;
+    jql += ' ORDER BY created ASC';
 
     do {
       if (cancelRequested) return { ok: false, cancelled: true };
@@ -168,7 +194,7 @@ ipcMain.handle('jira:download', async (event, payload) => {
         return { ok: false, error: 'Authentication failed while searching issues.' };
       }
       if (res.status === 400) {
-        return { ok: false, error: `Project "${project}" not found or JQL rejected.` };
+        return { ok: false, error: `One or more projects not found, or JQL rejected.` };
       }
       if (!res.ok) {
         return { ok: false, error: `Search failed with status ${res.status}.` };
@@ -192,6 +218,13 @@ ipcMain.handle('jira:download', async (event, payload) => {
     const allAttachments = [];
     for (const issue of issues) {
       for (const att of issue.attachments) {
+        // Apply the optional date range to each attachment's creation date.
+        if (fromMs != null || toMs != null) {
+          const created = att.created ? Date.parse(att.created) : NaN;
+          if (Number.isNaN(created)) continue;
+          if (fromMs != null && created < fromMs) continue;
+          if (toMs != null && created > toMs) continue;
+        }
         allAttachments.push({ issueKey: issue.key, att });
       }
     }
@@ -213,7 +246,9 @@ ipcMain.handle('jira:download', async (event, payload) => {
         return { ok: false, cancelled: true, downloaded, failed, total, rootDir };
       }
       const { issueKey, att } = allAttachments[i];
-      const targetDir = groupByIssue ? path.join(rootDir, sanitize(issueKey)) : rootDir;
+      let targetDir = rootDir;
+      if (projects.length > 1) targetDir = path.join(targetDir, sanitize(projectOf(issueKey)));
+      if (groupByIssue) targetDir = path.join(targetDir, sanitize(issueKey));
       await fsp.mkdir(targetDir, { recursive: true });
 
       const filename = sanitize(att.filename || `attachment-${att.id}`);

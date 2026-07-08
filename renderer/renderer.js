@@ -5,6 +5,8 @@ const els = {
   email: $('email'),
   token: $('token'),
   project: $('project'),
+  dateFrom: $('dateFrom'),
+  dateTo: $('dateTo'),
   folder: $('folder'),
   groupByIssue: $('groupByIssue'),
   testBtn: $('testBtn'),
@@ -27,6 +29,8 @@ function saveSettings() {
     site: els.site.value,
     email: els.email.value,
     project: els.project.value,
+    dateFrom: els.dateFrom.value,
+    dateTo: els.dateTo.value,
     folder: els.folder.value,
     groupByIssue: els.groupByIssue.checked
   };
@@ -41,12 +45,14 @@ function loadSettings() {
     els.site.value = data.site || '';
     els.email.value = data.email || '';
     els.project.value = data.project || '';
+    els.dateFrom.value = data.dateFrom || '';
+    els.dateTo.value = data.dateTo || '';
     els.folder.value = data.folder || '';
     els.groupByIssue.checked = data.groupByIssue !== false;
   } catch (_) {}
 }
 
-['site', 'email', 'project'].forEach((id) => {
+['site', 'email', 'project', 'dateFrom', 'dateTo'].forEach((id) => {
   els[id].addEventListener('input', saveSettings);
 });
 els.groupByIssue.addEventListener('change', saveSettings);
@@ -111,8 +117,11 @@ function setBusy(busy) {
 function validate() {
   const c = creds();
   if (!c.site || !c.email || !c.token) return 'Fill in your Jira site, email and API token.';
-  if (!els.project.value.trim()) return 'Enter a project key.';
+  if (!els.project.value.trim()) return 'Enter at least one project key.';
   if (!els.folder.value.trim()) return 'Choose a download folder.';
+  const from = els.dateFrom.value;
+  const to = els.dateTo.value;
+  if (from && to && from > to) return 'The "from" date is after the "to" date.';
   return null;
 }
 
@@ -134,6 +143,8 @@ els.downloadBtn.addEventListener('click', async () => {
   const payload = {
     ...c,
     projectKey: els.project.value.trim(),
+    dateFrom: els.dateFrom.value,
+    dateTo: els.dateTo.value,
     outputDir: els.folder.value.trim(),
     groupByIssue: els.groupByIssue.checked
   };
