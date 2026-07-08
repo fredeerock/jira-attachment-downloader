@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self';" />
+  <title>Jira Attachment Downloader</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="hero">
+      <div class="hero-icon">
+        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+      </div>
+      <div>
+        <h1>Jira Attachment Downloader</h1>
+        <p>Grab every attachment from a Jira Cloud project in one click.</p>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="card">
+        <h2>1 · Connect to Jira</h2>
+
+        <label class="field">
+          <span>Jira site URL</span>
+          <input id="site" type="text" placeholder="yourcompany.atlassian.net" autocomplete="off" />
+        </label>
+
+        <label class="field">
+          <span>Email</span>
+          <input id="email" type="email" placeholder="you@company.com" autocomplete="off" />
+        </label>
+
+        <label class="field">
+          <span>API token</span>
+          <input id="token" type="password" placeholder="Paste your Atlassian API token" autocomplete="off" />
+          <small class="hint">
+            Create one at <span class="link" id="tokenLink">id.atlassian.com → Security → API tokens</span>
+          </small>
+        </label>
+
+        <button id="testBtn" class="btn ghost">Test connection</button>
+        <div id="testResult" class="status-line"></div>
+      </section>
+
+      <section class="card">
+        <h2>2 · Choose project &amp; folder</h2>
+
+        <label class="field">
+          <span>Project key</span>
+          <input id="project" type="text" placeholder="e.g. ABC" autocomplete="off" />
+        </label>
+
+        <label class="field">
+          <span>Download to</span>
+          <div class="folder-row">
+            <input id="folder" type="text" placeholder="No folder selected" readonly />
+            <button id="folderBtn" class="btn ghost small">Browse…</button>
+          </div>
+        </label>
+
+        <label class="checkbox">
+          <input id="groupByIssue" type="checkbox" checked />
+          <span>Organize into a subfolder per issue</span>
+        </label>
+
+        <button id="downloadBtn" class="btn primary">Download all attachments</button>
+        <button id="cancelBtn" class="btn danger hidden">Cancel</button>
+      </section>
+    </main>
+
+    <section class="card progress-card">
+      <div class="progress-head">
+        <h2>Progress</h2>
+        <span id="counter" class="counter"></span>
+      </div>
+      <div class="progress-track">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+      <div id="currentItem" class="current-item">Idle — ready when you are.</div>
+      <div id="log" class="log"></div>
+    </section>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

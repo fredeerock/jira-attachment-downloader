@@ -1,0 +1,261 @@
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const fsp = require('fs/promises');
+
+let mainWindow = null;
+let cancelRequested = false;
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 940,
+    height: 760,
+    minWidth: 720,
+    minHeight: 600,
+    title: 'Jira Attachment Downloader',
+    backgroundColor: '#0f172a',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+// ---------- Helpers ----------
+
+function normalizeSite(site) {
+  let s = (site || '').trim();
+  if (!s) return '';
+  s = s.replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  return s;
+}
+
+function authHeader(email, token) {
+  return 'Basic ' + Buffer.from(`${email}:${token}`).toString('base64');
+}
+
+function sanitize(name) {
+  return (name || 'untitled')
+    .replace(/[/\\?%*:|"<>]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180) || 'untitled';
+}
+
+async function uniquePath(dir, filename) {
+  const ext = path.extname(filename);
+  const base = path.basename(filename, ext);
+  let candidate = path.join(dir, filename);
+  let i = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${base} (${i})${ext}`);
+    i += 1;
+  }
+  return candidate;
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+// ---------- IPC: Test connection ----------
+
+ipcMain.handle('jira:test', async (_event, { site, email, token }) => {
+  const base = normalizeSite(site);
+  if (!base || !email || !token) {
+    return { ok: false, error: 'Please fill in site, email and API token.' };
+  }
+  try {
+    const res = await fetch(`${base}/rest/api/3/myself`, {
+      headers: { Authorization: authHeader(email, token), Accept: 'application/json' }
+    });
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, error: 'Authentication failed. Check your email and API token.' };
+    }
+    if (!res.ok) {
+      return { ok: false, error: `Server returned ${res.status}. Check the site URL.` };
+    }
+    const me = await res.json();
+    return { ok: true, displayName: me.displayName || me.emailAddress || 'Connected' };
+  } catch (err) {
+    return { ok: false, error: `Could not reach Jira: ${err.message}` };
+  }
+});
+
+// ---------- IPC: pick / open folder ----------
+
+ipcMain.handle('jira:pickFolder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a download folder',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('jira:openFolder', async (_event, folder) => {
+  if (folder) shell.openPath(folder);
+});
+
+ipcMain.handle('jira:openExternal', async (_event, url) => {
+  if (url && /^https:\/\//i.test(url)) shell.openExternal(url);
+});
+
+ipcMain.handle('jira:cancel', async () => {
+  cancelRequested = true;
+});
+
+// ---------- IPC: download ----------
+
+ipcMain.handle('jira:download', async (event, payload) => {
+  cancelRequested = false;
+  const send = (data) => event.sender.send('download:progress', data);
+
+  const base = normalizeSite(payload.site);
+  const { email, token, projectKey, outputDir } = payload;
+  const groupByIssue = payload.groupByIssue !== false;
+
+  if (!base || !email || !token) return { ok: false, error: 'Missing credentials.' };
+  if (!projectKey) return { ok: false, error: 'Missing project key.' };
+  if (!outputDir) return { ok: false, error: 'Missing download folder.' };
+
+  const auth = authHeader(email, token);
+  const project = projectKey.trim().toUpperCase();
+
+  const rootDir = path.join(outputDir, sanitize(`${project} attachments`));
+  await fsp.mkdir(rootDir, { recursive: true });
+
+  try {
+    send({ type: 'status', message: `Searching issues in ${project}…` });
+
+    // 1. Collect all issues + attachments (paginated via enhanced JQL search).
+    const issues = [];
+    let nextPageToken = undefined;
+    const jql = `project = "${project}" AND attachments IS NOT EMPTY ORDER BY created ASC`;
+
+    do {
+      if (cancelRequested) return { ok: false, cancelled: true };
+      const url = new URL(`${base}/rest/api/3/search/jql`);
+      url.searchParams.set('jql', jql);
+      url.searchParams.set('fields', 'attachment,key,summary');
+      url.searchParams.set('maxResults', '100');
+      if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
+
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: auth, Accept: 'application/json' }
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, error: 'Authentication failed while searching issues.' };
+      }
+      if (res.status === 400) {
+        return { ok: false, error: `Project "${project}" not found or JQL rejected.` };
+      }
+      if (!res.ok) {
+        return { ok: false, error: `Search failed with status ${res.status}.` };
+      }
+
+      const data = await res.json();
+      for (const issue of data.issues || []) {
+        const attachments = (issue.fields && issue.fields.attachment) || [];
+        if (attachments.length) {
+          issues.push({
+            key: issue.key,
+            summary: (issue.fields && issue.fields.summary) || '',
+            attachments
+          });
+        }
+      }
+      nextPageToken = data.nextPageToken;
+      send({ type: 'status', message: `Found ${issues.length} issue(s) with attachments so far…` });
+    } while (nextPageToken);
+
+    const allAttachments = [];
+    for (const issue of issues) {
+      for (const att of issue.attachments) {
+        allAttachments.push({ issueKey: issue.key, att });
+      }
+    }
+
+    const total = allAttachments.length;
+    if (total === 0) {
+      return { ok: true, total: 0, downloaded: 0, failed: 0, rootDir };
+    }
+
+    send({ type: 'begin', total, message: `Downloading ${total} attachment(s)…` });
+
+    // 2. Download each attachment.
+    let downloaded = 0;
+    let failed = 0;
+    let bytes = 0;
+
+    for (let i = 0; i < allAttachments.length; i++) {
+      if (cancelRequested) {
+        return { ok: false, cancelled: true, downloaded, failed, total, rootDir };
+      }
+      const { issueKey, att } = allAttachments[i];
+      const targetDir = groupByIssue ? path.join(rootDir, sanitize(issueKey)) : rootDir;
+      await fsp.mkdir(targetDir, { recursive: true });
+
+      const filename = sanitize(att.filename || `attachment-${att.id}`);
+      const destPath = await uniquePath(targetDir, filename);
+
+      try {
+        const res = await fetch(att.content, {
+          headers: { Authorization: auth }
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const buffer = Buffer.from(await res.arrayBuffer());
+        await fsp.writeFile(destPath, buffer);
+        bytes += buffer.length;
+        downloaded += 1;
+        send({
+          type: 'progress',
+          current: i + 1,
+          total,
+          downloaded,
+          failed,
+          bytes,
+          bytesLabel: formatBytes(bytes),
+          message: `${issueKey} · ${filename}`
+        });
+      } catch (err) {
+        failed += 1;
+        send({
+          type: 'progress',
+          current: i + 1,
+          total,
+          downloaded,
+          failed,
+          bytes,
+          bytesLabel: formatBytes(bytes),
+          message: `Failed: ${issueKey} · ${filename} (${err.message})`,
+          error: true
+        });
+      }
+    }
+
+    return { ok: true, total, downloaded, failed, bytes, bytesLabel: formatBytes(bytes), rootDir };
+  } catch (err) {
+    return { ok: false, error: err.message, rootDir };
+  }
+});
