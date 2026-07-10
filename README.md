@@ -59,6 +59,37 @@ Output appears in the `release/` folder.
 
 > Note: build the macOS app on a Mac and the Windows app on Windows for best results.
 
+## Signing & notarizing the macOS app
+
+By default `npm run dist:mac` will code-sign and notarize the app so users don't
+see the "unidentified developer" / Gatekeeper warning. This requires:
+
+1. A paid **Apple Developer Program** membership.
+2. A **Developer ID Application** certificate installed in your login keychain
+   (create it in Xcode → Settings → Accounts → Manage Certificates, or on the
+   Apple Developer website, then download and double-click it).
+3. An **app-specific password** for your Apple ID
+   (appleid.apple.com → Sign-In and Security → App-Specific Passwords).
+4. Your 10-character **Team ID** (developer.apple.com → Membership).
+
+Then build with the credentials set as environment variables:
+
+```bash
+export APPLE_ID="you@example.com"
+export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+export APPLE_TEAM_ID="ABCDE12345"
+npm run dist:mac
+```
+
+The signing certificate is picked up automatically from your keychain, and the
+app is notarized via Apple's notary service (this can take a few minutes).
+
+If you just want a quick local build **without** signing, run:
+
+```bash
+npm run dist:mac:unsigned
+```
+
 ## Privacy
 
 Everything runs locally on your machine. Your credentials are sent only to your

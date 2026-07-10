@@ -10,15 +10,18 @@
     "start": "electron .",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
+    "dist:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
     "dist:win": "electron-builder --win"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3"
   },
   "build": {
     "appId": "com.you.jira-attachment-downloader",
     "productName": "Jira Attachment Downloader",
+    "afterSign": "build/notarize.js",
     "files": [
       "src/**/*",
       "renderer/**/*",
@@ -29,8 +32,11 @@
     },
     "mac": {
       "category": "public.app-category.productivity",
-      "identity": null,
       "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "target": [
         "dmg",
         "zip"
