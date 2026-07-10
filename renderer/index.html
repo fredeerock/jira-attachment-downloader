@@ -11,13 +11,30 @@
 <body>
   <div class="app">
     <header class="hero">
-      <div class="hero-icon">
-        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-          <polyline points="7 10 12 15 17 10"></polyline>
-          <line x1="12" y1="15" x2="12" y2="3"></line>
-        </svg>
-      </div>
+      <svg class="hero-icon" viewBox="0 0 1024 1024" width="54" height="54" xmlns="http://www.w3.org/2000/svg" aria-label="App logo">
+        <defs>
+          <linearGradient id="hbg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#6366f1"/>
+            <stop offset="1" stop-color="#8b5cf6"/>
+          </linearGradient>
+          <linearGradient id="hpaper" x1="360" y1="240" x2="700" y2="740" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#ffffff"/>
+            <stop offset="1" stop-color="#e6e8fb"/>
+          </linearGradient>
+          <linearGradient id="harrow" x1="512" y1="440" x2="512" y2="680" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#6366f1"/>
+            <stop offset="1" stop-color="#8b5cf6"/>
+          </linearGradient>
+        </defs>
+        <rect x="80" y="80" width="864" height="864" rx="200" fill="url(#hbg)"/>
+        <path d="M372 250 h196 a24 24 0 0 1 17 7 l104 104 a24 24 0 0 1 7 17 v366 a40 40 0 0 1 -40 40 H372 a40 40 0 0 1 -40 -40 V290 a40 40 0 0 1 40 -40 Z" fill="url(#hpaper)"/>
+        <path d="M566 253 v91 a20 20 0 0 0 20 20 h91 Z" fill="#c7d2fe"/>
+        <g stroke="url(#harrow)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <line x1="512" y1="440" x2="512" y2="642"/>
+          <polyline points="426,558 512,644 598,558"/>
+        </g>
+        <line x1="424" y1="712" x2="600" y2="712" stroke="#a5b4fc" stroke-width="42" stroke-linecap="round"/>
+      </svg>
       <div>
         <h1>Jira Attachment Downloader</h1>
         <p>Grab every attachment from a Jira Cloud project in one click.</p>

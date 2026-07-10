@@ -13,6 +13,7 @@ function createWindow() {
     minWidth: 720,
     minHeight: 600,
     title: 'Jira Attachment Downloader',
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     backgroundColor: '#0f172a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

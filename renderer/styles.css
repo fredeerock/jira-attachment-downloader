@@ -48,11 +48,7 @@ body { overflow-y: auto; }
   width: 54px;
   height: 54px;
   flex: none;
-  display: grid;
-  place-items: center;
   border-radius: 14px;
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
   box-shadow: 0 10px 30px var(--accent-glow);
 }
 .hero h1 {
