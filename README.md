@@ -52,12 +52,22 @@ Create a double-click installer for your platform:
 
 ```bash
 npm run dist:mac    # .dmg + .zip (run on a Mac)
-npm run dist:win    # .exe installer (run on Windows)
+npm run dist:win    # .exe installer + portable .zip (run on Windows)
 ```
 
 Output appears in the `release/` folder.
 
-> Note: build the macOS app on a Mac and the Windows app on Windows for best results.
+> Note: the Windows **installer** (`.exe`) must be built on Windows (or with Wine).
+> The portable Windows **`.zip`** can be built from macOS with
+> `npx electron-builder --win zip --x64`.
+
+### Running the portable Windows build
+
+Windows users who download the `.zip` can just unzip it and run
+`Jira Attachment Downloader.exe` inside — no installation needed. Pick the
+plain `-win.zip` for Intel/AMD (x64) PCs, or `-arm64-win.zip` for ARM PCs.
+On first launch, Windows SmartScreen may show a warning; click **More info →
+Run anyway**.
 
 ## Signing & notarizing the macOS app
 
