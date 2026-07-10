@@ -9,18 +9,19 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac",
+    "dist:mac": "rm -rf /private/tmp/jira-attachment-build && electron-builder --mac -c.directories.output=/private/tmp/jira-attachment-build && mkdir -p release && cp /private/tmp/jira-attachment-build/*.dmg /private/tmp/jira-attachment-build/*-mac.zip release/ && echo '\\n  • Signed artifacts copied to ./release'",
     "dist:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
     "dist:win": "electron-builder --win"
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.1",
     "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.you.jira-attachment-downloader",
     "productName": "Jira Attachment Downloader",
+    "afterPack": "build/afterPack.js",
     "afterSign": "build/notarize.js",
     "files": [
       "src/**/*",

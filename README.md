@@ -92,7 +92,16 @@ npm run dist:mac
 ```
 
 The signing certificate is picked up automatically from your keychain, and the
-app is notarized via Apple's notary service (this can take a few minutes).
+app is notarized via Apple's notary service (this can take a few minutes). The
+resulting `.dmg` opens with no Gatekeeper warning.
+
+> **Why the build outputs to `/tmp`:** recent macOS attaches a
+> `com.apple.provenance` extended attribute to files created inside
+> Gatekeeper-tracked locations (like `~/Documents`), which `codesign` rejects
+> with *"resource fork, Finder information, or similar detritus not allowed"*.
+> The `dist:mac` script works around this by building into
+> `/private/tmp/jira-attachment-build` (where the OS assigns a clean
+> provenance) and then copying the signed `.dmg`/`.zip` back into `release/`.
 
 If you just want a quick local build **without** signing, run:
 
