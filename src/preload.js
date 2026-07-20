@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('api', {
   testConnection: (creds) => ipcRenderer.invoke('jira:test', creds),
   listProjects: (creds) => ipcRenderer.invoke('jira:projects', creds),
+  preloadMedia: (payload) => ipcRenderer.invoke('jira:preloadMedia', payload),
+  generateReport: (payload) => ipcRenderer.invoke('jira:generateReport', payload),
   pickFolder: () => ipcRenderer.invoke('jira:pickFolder'),
   startDownload: (payload) => ipcRenderer.invoke('jira:download', payload),
   cancelDownload: () => ipcRenderer.invoke('jira:cancel'),

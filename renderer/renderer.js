@@ -23,10 +23,31 @@ const els = {
   counter: $('counter'),
   currentItem: $('currentItem'),
   log: $('log'),
-  tokenLink: $('tokenLink')
+  tokenLink: $('tokenLink'),
+  preloadMediaBtn: $('preloadMediaBtn'),
+  selectAllMediaBtn: $('selectAllMediaBtn'),
+  clearMediaBtn: $('clearMediaBtn'),
+  mediaStatus: $('mediaStatus'),
+  mediaList: $('mediaList'),
+  reportTitle: $('reportTitle'),
+  reportGrouping: $('reportGrouping'),
+  accomplishedNotes: $('accomplishedNotes'),
+  todoNotes: $('todoNotes'),
+  generateReportBtn: $('generateReportBtn')
 };
 
 const STORAGE_KEY = 'jira-downloader-settings';
+
+let loadedProjects = [];
+let preloadedMedia = [];
+let selectedMediaIds = new Set();
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
 
 // ---- Persist non-secret settings locally ----
 function saveSettings() {
@@ -37,7 +58,11 @@ function saveSettings() {
     dateFrom: els.dateFrom.value,
     dateTo: els.dateTo.value,
     folder: els.folder.value,
-    groupByIssue: els.groupByIssue.checked
+    groupByIssue: els.groupByIssue.checked,
+    reportTitle: els.reportTitle.value,
+    reportGrouping: els.reportGrouping.value,
+    accomplishedNotes: els.accomplishedNotes.value,
+    todoNotes: els.todoNotes.value
   };
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
 }
@@ -54,10 +79,17 @@ function loadSettings() {
     els.dateTo.value = data.dateTo || '';
     els.folder.value = data.folder || '';
     els.groupByIssue.checked = data.groupByIssue !== false;
+    els.reportTitle.value = data.reportTitle || '';
+    els.reportGrouping.value = data.reportGrouping || 'task';
+    els.accomplishedNotes.value = data.accomplishedNotes || '';
+    els.todoNotes.value = data.todoNotes || '';
   } catch (_) {}
 }
 
-['site', 'email', 'project', 'dateFrom', 'dateTo'].forEach((id) => {
+[
+  'site', 'email', 'project', 'dateFrom', 'dateTo',
+  'reportTitle', 'reportGrouping', 'accomplishedNotes', 'todoNotes'
+].forEach((id) => {
   els[id].addEventListener('input', saveSettings);
 });
 els.groupByIssue.addEventListener('change', saveSettings);
@@ -80,40 +112,27 @@ function creds() {
   };
 }
 
-// ---- Test connection ----
-els.testBtn.addEventListener('click', async () => {
-  els.testResult.className = 'status-line load';
-  els.testResult.textContent = 'Testing…';
-  els.testBtn.disabled = true;
-  try {
-    const result = await window.api.testConnection(creds());
-    if (result.ok) {
-      els.testResult.className = 'status-line ok';
-      els.testResult.textContent = `Connected as ${result.displayName} ✓`;
-    } else {
-      els.testResult.className = 'status-line err';
-      els.testResult.textContent = result.error;
-    }
-  } catch (err) {
-    els.testResult.className = 'status-line err';
-    els.testResult.textContent = err.message;
-  } finally {
-    els.testBtn.disabled = false;
-  }
-});
+function buildBasePayload() {
+  return {
+    ...creds(),
+    projectKey: els.project.value.trim(),
+    dateFrom: els.dateFrom.value,
+    dateTo: els.dateTo.value
+  };
+}
 
-// ---- Pick folder ----
-els.folderBtn.addEventListener('click', async () => {
-  const folder = await window.api.pickFolder();
-  if (folder) {
-    els.folder.value = folder;
-    saveSettings();
-  }
-});
+function validateBaseInputs(requireFolder) {
+  const c = creds();
+  if (!c.site || !c.email || !c.token) return 'Fill in your Jira site, email and API token.';
+  if (!els.project.value.trim()) return 'Enter at least one project key.';
+  const from = els.dateFrom.value;
+  const to = els.dateTo.value;
+  if (from && to && from > to) return 'The "from" date is after the "to" date.';
+  if (requireFolder && !els.folder.value.trim()) return 'Choose a download folder.';
+  return null;
+}
 
 // ---- Project list ----
-let loadedProjects = [];
-
 function getSelectedKeys() {
   return els.project.value
     .split(/[\s,]+/)
@@ -202,6 +221,37 @@ els.project.addEventListener('input', () => {
   if (loadedProjects.length) renderProjects();
 });
 
+// ---- Test connection ----
+els.testBtn.addEventListener('click', async () => {
+  els.testResult.className = 'status-line load';
+  els.testResult.textContent = 'Testing…';
+  els.testBtn.disabled = true;
+  try {
+    const result = await window.api.testConnection(creds());
+    if (result.ok) {
+      els.testResult.className = 'status-line ok';
+      els.testResult.textContent = `Connected as ${result.displayName} ✓`;
+    } else {
+      els.testResult.className = 'status-line err';
+      els.testResult.textContent = result.error;
+    }
+  } catch (err) {
+    els.testResult.className = 'status-line err';
+    els.testResult.textContent = err.message;
+  } finally {
+    els.testBtn.disabled = false;
+  }
+});
+
+// ---- Pick folder ----
+els.folderBtn.addEventListener('click', async () => {
+  const folder = await window.api.pickFolder();
+  if (folder) {
+    els.folder.value = folder;
+    saveSettings();
+  }
+});
+
 // ---- Download ----
 function setBusy(busy) {
   els.downloadBtn.disabled = busy;
@@ -210,19 +260,8 @@ function setBusy(busy) {
   els.cancelBtn.classList.toggle('hidden', !busy);
 }
 
-function validate() {
-  const c = creds();
-  if (!c.site || !c.email || !c.token) return 'Fill in your Jira site, email and API token.';
-  if (!els.project.value.trim()) return 'Enter at least one project key.';
-  if (!els.folder.value.trim()) return 'Choose a download folder.';
-  const from = els.dateFrom.value;
-  const to = els.dateTo.value;
-  if (from && to && from > to) return 'The "from" date is after the "to" date.';
-  return null;
-}
-
 els.downloadBtn.addEventListener('click', async () => {
-  const error = validate();
+  const error = validateBaseInputs(true);
   if (error) {
     log(error, 'err');
     els.currentItem.textContent = error;
@@ -235,17 +274,13 @@ els.downloadBtn.addEventListener('click', async () => {
   els.currentItem.textContent = 'Starting…';
   setBusy(true);
 
-  const c = creds();
   const payload = {
-    ...c,
-    projectKey: els.project.value.trim(),
-    dateFrom: els.dateFrom.value,
-    dateTo: els.dateTo.value,
+    ...buildBasePayload(),
     outputDir: els.folder.value.trim(),
     groupByIssue: els.groupByIssue.checked
   };
 
-  log(`Starting download for project ${payload.projectKey}…`, 'info');
+  log(`Starting download for projects ${payload.projectKey}…`, 'info');
 
   const removeListener = window.api.onProgress((data) => {
     if (data.type === 'status') {
@@ -269,7 +304,7 @@ els.downloadBtn.addEventListener('click', async () => {
       log(`Cancelled after ${result.downloaded || 0} file(s).`, 'err');
     } else if (result.ok) {
       if (result.total === 0) {
-        els.currentItem.textContent = 'No attachments found in this project.';
+        els.currentItem.textContent = 'No attachments found in these projects.';
         els.progressBar.style.width = '100%';
         log('No attachments found.', 'info');
       } else {
@@ -300,8 +335,197 @@ els.cancelBtn.addEventListener('click', () => {
   els.currentItem.textContent = 'Cancelling…';
 });
 
+// ---- Report media preload + selection ----
+function setReportBusy(busy) {
+  els.preloadMediaBtn.disabled = busy;
+  els.selectAllMediaBtn.disabled = busy || preloadedMedia.length === 0;
+  els.clearMediaBtn.disabled = busy || preloadedMedia.length === 0;
+  els.generateReportBtn.disabled = busy || selectedMediaIds.size === 0;
+}
+
+function updateMediaActionsEnabled() {
+  els.selectAllMediaBtn.disabled = preloadedMedia.length === 0;
+  els.clearMediaBtn.disabled = preloadedMedia.length === 0;
+  els.generateReportBtn.disabled = selectedMediaIds.size === 0;
+}
+
+function renderMediaList() {
+  els.mediaList.innerHTML = '';
+
+  if (!preloadedMedia.length) {
+    const empty = document.createElement('div');
+    empty.className = 'media-empty';
+    empty.textContent = 'No preloaded media yet. Click "Preload media from selected projects".';
+    els.mediaList.appendChild(empty);
+    updateMediaActionsEnabled();
+    return;
+  }
+
+  preloadedMedia.forEach((item) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'media-item';
+
+    const top = document.createElement('label');
+    top.className = 'media-check';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = selectedMediaIds.has(item.id);
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedMediaIds.add(item.id);
+      else selectedMediaIds.delete(item.id);
+      updateMediaActionsEnabled();
+      els.mediaStatus.className = 'status-line ok';
+      els.mediaStatus.textContent = `${selectedMediaIds.size} selected of ${preloadedMedia.length}`;
+    });
+
+    const topText = document.createElement('span');
+    topText.textContent = `${item.issueKey} · ${item.status}`;
+
+    top.append(cb, topText);
+
+    const src = encodeURI(item.localUri || '');
+    let preview;
+    if ((item.mimeType || '').startsWith('video/')) {
+      preview = document.createElement('video');
+      preview.className = 'media-preview';
+      preview.src = src;
+      preview.controls = true;
+      preview.preload = 'metadata';
+      preview.muted = true;
+    } else {
+      preview = document.createElement('img');
+      preview.className = 'media-preview';
+      preview.src = src;
+      preview.alt = item.fileName || 'image';
+      preview.loading = 'lazy';
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'media-meta';
+
+    const title = document.createElement('strong');
+    title.textContent = item.fileName || 'media';
+
+    const info = document.createElement('span');
+    info.textContent = `${item.issueSummary || ''}`;
+
+    const extra = document.createElement('span');
+    extra.textContent = `${formatBytes(item.bytes || 0)} · ${item.epicKey ? `Epic ${item.epicKey}` : 'No epic'}`;
+
+    meta.append(title, info, extra);
+    wrap.append(top, preview, meta);
+    els.mediaList.appendChild(wrap);
+  });
+
+  updateMediaActionsEnabled();
+}
+
+els.preloadMediaBtn.addEventListener('click', async () => {
+  const error = validateBaseInputs(false);
+  if (error) {
+    els.mediaStatus.className = 'status-line err';
+    els.mediaStatus.textContent = error;
+    return;
+  }
+
+  setReportBusy(true);
+  els.mediaStatus.className = 'status-line load';
+  els.mediaStatus.textContent = 'Preloading media… this may take a while for large projects.';
+
+  try {
+    const result = await window.api.preloadMedia(buildBasePayload());
+    if (result.cancelled) {
+      els.mediaStatus.className = 'status-line err';
+      els.mediaStatus.textContent = 'Preload cancelled.';
+      return;
+    }
+    if (!result.ok) {
+      els.mediaStatus.className = 'status-line err';
+      els.mediaStatus.textContent = result.error || 'Media preload failed.';
+      return;
+    }
+
+    preloadedMedia = result.items || [];
+    selectedMediaIds = new Set(preloadedMedia.map((i) => i.id));
+    renderMediaList();
+
+    els.mediaStatus.className = 'status-line ok';
+    els.mediaStatus.textContent =
+      `Preloaded ${result.preloaded} media files (${result.totalCandidates} found). ${selectedMediaIds.size} selected.`;
+    log(`Preloaded media for report: ${result.preloaded} file(s).`, 'info');
+  } catch (err) {
+    els.mediaStatus.className = 'status-line err';
+    els.mediaStatus.textContent = err.message;
+  } finally {
+    setReportBusy(false);
+  }
+});
+
+els.selectAllMediaBtn.addEventListener('click', () => {
+  selectedMediaIds = new Set(preloadedMedia.map((i) => i.id));
+  renderMediaList();
+  els.mediaStatus.className = 'status-line ok';
+  els.mediaStatus.textContent = `${selectedMediaIds.size} selected of ${preloadedMedia.length}`;
+});
+
+els.clearMediaBtn.addEventListener('click', () => {
+  selectedMediaIds = new Set();
+  renderMediaList();
+  els.mediaStatus.className = 'status-line ok';
+  els.mediaStatus.textContent = 'Selection cleared.';
+});
+
+els.generateReportBtn.addEventListener('click', async () => {
+  const error = validateBaseInputs(true);
+  if (error) {
+    els.mediaStatus.className = 'status-line err';
+    els.mediaStatus.textContent = error;
+    return;
+  }
+  if (selectedMediaIds.size === 0) {
+    els.mediaStatus.className = 'status-line err';
+    els.mediaStatus.textContent = 'Select at least one media item for the report.';
+    return;
+  }
+
+  setReportBusy(true);
+  els.mediaStatus.className = 'status-line load';
+  els.mediaStatus.textContent = 'Generating report…';
+
+  try {
+    const result = await window.api.generateReport({
+      ...buildBasePayload(),
+      outputDir: els.folder.value.trim(),
+      reportTitle: els.reportTitle.value.trim() || 'Stakeholder Report',
+      grouping: els.reportGrouping.value,
+      accomplishedNotes: els.accomplishedNotes.value,
+      todoNotes: els.todoNotes.value,
+      selectedIds: [...selectedMediaIds],
+      mediaItems: preloadedMedia
+    });
+
+    if (!result.ok) {
+      els.mediaStatus.className = 'status-line err';
+      els.mediaStatus.textContent = result.error || 'Report generation failed.';
+      return;
+    }
+
+    els.mediaStatus.className = 'status-line ok';
+    els.mediaStatus.textContent = `Report generated with ${result.mediaCount} media item(s).`;
+    log(`Stakeholder report created: ${result.reportPath}`, 'ok');
+    if (result.rootDir) window.api.openFolder(result.rootDir);
+  } catch (err) {
+    els.mediaStatus.className = 'status-line err';
+    els.mediaStatus.textContent = err.message;
+  } finally {
+    setReportBusy(false);
+  }
+});
+
 els.tokenLink.addEventListener('click', () => {
   window.api.openExternal('https://id.atlassian.com/manage-profile/security/api-tokens');
 });
 
 loadSettings();
+renderMediaList();

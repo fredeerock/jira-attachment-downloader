@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self';" />
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: file:; media-src 'self' data: file:; font-src 'self';" />
   <title>Jira Attachment Downloader</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -113,6 +113,48 @@
         <button id="cancelBtn" class="btn danger hidden">Cancel</button>
       </section>
     </main>
+
+    <section class="card report-card">
+      <h2>3 · Build Stakeholder Report</h2>
+      <p class="hint report-hint">
+        Preload all pictures/videos from the selected project(s), choose the media you want,
+        then generate a shareable HTML report.
+      </p>
+
+      <div class="report-actions">
+        <button id="preloadMediaBtn" class="btn ghost small">Preload media from selected projects</button>
+        <button id="selectAllMediaBtn" class="btn ghost small" disabled>Select all</button>
+        <button id="clearMediaBtn" class="btn ghost small" disabled>Clear selection</button>
+      </div>
+      <div id="mediaStatus" class="status-line"></div>
+
+      <div id="mediaList" class="media-list"></div>
+
+      <label class="field">
+        <span>Report title</span>
+        <input id="reportTitle" type="text" placeholder="Example: Sprint 14 Stakeholder Update" autocomplete="off" />
+      </label>
+
+      <label class="field">
+        <span>Group work by</span>
+        <select id="reportGrouping">
+          <option value="task" selected>Task / issue</option>
+          <option value="epic">Epic (falls back to No Epic if unavailable)</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Accomplished (manual summary)</span>
+        <textarea id="accomplishedNotes" rows="4" placeholder="Optional narrative summary of what was accomplished."></textarea>
+      </label>
+
+      <label class="field">
+        <span>Yet to be accomplished (manual summary)</span>
+        <textarea id="todoNotes" rows="4" placeholder="Optional narrative summary of what remains."></textarea>
+      </label>
+
+      <button id="generateReportBtn" class="btn primary" disabled>Generate HTML report from selected media</button>
+    </section>
 
     <section class="card progress-card">
       <div class="progress-head">

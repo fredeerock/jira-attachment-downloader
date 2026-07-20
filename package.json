@@ -1,7 +1,7 @@
 {
   "name": "jira-attachment-downloader",
   "productName": "Jira Attachment Downloader",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Download all attachments for a given Jira Cloud project.",
   "main": "src/main.js",
   "author": "You",
