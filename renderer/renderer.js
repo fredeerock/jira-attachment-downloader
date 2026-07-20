@@ -29,6 +29,7 @@ const els = {
   clearMediaBtn: $('clearMediaBtn'),
   mediaStatus: $('mediaStatus'),
   mediaList: $('mediaList'),
+  loadMoreMediaBtn: $('loadMoreMediaBtn'),
   reportTitle: $('reportTitle'),
   reportGrouping: $('reportGrouping'),
   accomplishedNotes: $('accomplishedNotes'),
@@ -41,6 +42,8 @@ const STORAGE_KEY = 'jira-downloader-settings';
 let loadedProjects = [];
 let preloadedMedia = [];
 let selectedMediaIds = new Set();
+let visibleMediaCount = 0;
+const MEDIA_BATCH_SIZE = 80;
 
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
@@ -350,6 +353,7 @@ function updateMediaActionsEnabled() {
 }
 
 function renderMediaList() {
+  const visible = preloadedMedia.slice(0, visibleMediaCount || MEDIA_BATCH_SIZE);
   els.mediaList.innerHTML = '';
 
   if (!preloadedMedia.length) {
@@ -357,11 +361,12 @@ function renderMediaList() {
     empty.className = 'media-empty';
     empty.textContent = 'No preloaded media yet. Click "Preload media from selected projects".';
     els.mediaList.appendChild(empty);
+    els.loadMoreMediaBtn.classList.add('hidden');
     updateMediaActionsEnabled();
     return;
   }
 
-  preloadedMedia.forEach((item) => {
+  visible.forEach((item) => {
     const wrap = document.createElement('div');
     wrap.className = 'media-item';
 
@@ -387,12 +392,9 @@ function renderMediaList() {
     const src = encodeURI(item.localUri || '');
     let preview;
     if ((item.mimeType || '').startsWith('video/')) {
-      preview = document.createElement('video');
-      preview.className = 'media-preview';
-      preview.src = src;
-      preview.controls = true;
-      preview.preload = 'metadata';
-      preview.muted = true;
+      preview = document.createElement('div');
+      preview.className = 'media-video-placeholder';
+      preview.textContent = 'Video file (preview disabled for stability)';
     } else {
       preview = document.createElement('img');
       preview.className = 'media-preview';
@@ -418,8 +420,22 @@ function renderMediaList() {
     els.mediaList.appendChild(wrap);
   });
 
+  if (visible.length < preloadedMedia.length) {
+    els.loadMoreMediaBtn.classList.remove('hidden');
+    els.loadMoreMediaBtn.textContent = `Load more media (${visible.length}/${preloadedMedia.length})`;
+  } else {
+    els.loadMoreMediaBtn.classList.add('hidden');
+  }
+
   updateMediaActionsEnabled();
 }
+
+els.loadMoreMediaBtn.addEventListener('click', () => {
+  visibleMediaCount = Math.min(preloadedMedia.length, (visibleMediaCount || MEDIA_BATCH_SIZE) + MEDIA_BATCH_SIZE);
+  renderMediaList();
+  els.mediaStatus.className = 'status-line ok';
+  els.mediaStatus.textContent = `Showing ${visibleMediaCount} of ${preloadedMedia.length} media items.`;
+});
 
 els.preloadMediaBtn.addEventListener('click', async () => {
   const error = validateBaseInputs(false);
@@ -447,12 +463,12 @@ els.preloadMediaBtn.addEventListener('click', async () => {
     }
 
     preloadedMedia = result.items || [];
-    selectedMediaIds = new Set(preloadedMedia.map((i) => i.id));
+    selectedMediaIds = new Set();
+    visibleMediaCount = Math.min(preloadedMedia.length, MEDIA_BATCH_SIZE);
     renderMediaList();
 
     els.mediaStatus.className = 'status-line ok';
-    els.mediaStatus.textContent =
-      `Preloaded ${result.preloaded} media files (${result.totalCandidates} found). ${selectedMediaIds.size} selected.`;
+    els.mediaStatus.textContent = `Preloaded ${result.preloaded} media files (${result.totalCandidates} found). ${result.truncated ? `Showing first ${result.maxItems} to keep the app stable.` : ''} Select the ones to include.`;
     log(`Preloaded media for report: ${result.preloaded} file(s).`, 'info');
   } catch (err) {
     els.mediaStatus.className = 'status-line err';

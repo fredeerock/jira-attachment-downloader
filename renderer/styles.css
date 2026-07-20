@@ -298,6 +298,18 @@ input[type="date"]:focus {
   font-size: 11px;
   margin-top: 4px;
 }
+.media-video-placeholder {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 10px;
+  background: linear-gradient(135deg, rgba(17, 24, 39, 0.9), rgba(30, 41, 59, 0.95));
+  color: #cbd5e1;
+  font-size: 12px;
+}
+#loadMoreMediaBtn { margin-top: 2px; margin-bottom: 14px; }
 
 .checkbox {
   display: flex;

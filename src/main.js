@@ -299,6 +299,7 @@ ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
 
   const auth = authHeader(email, token);
   const { dateFrom, fromMs, toMs } = parsedRange;
+  const maxItems = Math.max(50, Math.min(Number(payload.maxItems) || 1500, 5000));
 
   try {
     const issueResult = await fetchIssuesWithAttachments({ base, auth, projects, dateFrom });
@@ -326,10 +327,11 @@ ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
     }
 
     let cached = 0;
+    let truncated = false;
     for (const issue of issueResult.issues) {
       const attachments = (issue.fields && issue.fields.attachment) || [];
       const issueSummary = (issue.fields && issue.fields.summary) || '';
-      const issueDescription = descriptionToText(issue.fields && issue.fields.description);
+      const issueDescription = descriptionToText(issue.fields && issue.fields.description).slice(0, 4000);
       const status = statusName(issue);
 
       const parent = issue.fields && issue.fields.parent;
@@ -345,6 +347,11 @@ ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
           if (toMs != null && created > toMs) continue;
         }
         if (!isMediaAttachment(att)) continue;
+
+        if (items.length >= maxItems) {
+          truncated = true;
+          break;
+        }
 
         if (cancelRequested) return { ok: false, cancelled: true };
 
@@ -379,6 +386,8 @@ ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
           // Ignore individual media failures and continue.
         }
       }
+
+      if (truncated) break;
     }
 
     return {
@@ -386,6 +395,8 @@ ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
       projects,
       totalCandidates,
       preloaded: items.length,
+      truncated,
+      maxItems,
       items
     };
   } catch (err) {
