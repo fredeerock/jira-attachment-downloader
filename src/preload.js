@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld('api', {
   cancelDownload: () => ipcRenderer.invoke('jira:cancel'),
   openFolder: (folder) => ipcRenderer.invoke('jira:openFolder', folder),
   openExternal: (url) => ipcRenderer.invoke('jira:openExternal', url),
+  onPreloadProgress: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('preload:progress', listener);
+    return () => ipcRenderer.removeListener('preload:progress', listener);
+  },
   onProgress: (callback) => {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on('download:progress', listener);

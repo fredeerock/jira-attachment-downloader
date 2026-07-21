@@ -127,6 +127,10 @@
         <button id="clearMediaBtn" class="btn ghost small" disabled>Clear selection</button>
       </div>
       <div id="mediaStatus" class="status-line"></div>
+      <div class="preload-progress-track">
+        <div id="preloadProgressBar" class="preload-progress-bar"></div>
+      </div>
+      <div id="preloadCounter" class="counter"></div>
 
       <div id="mediaList" class="media-list"></div>
       <button id="loadMoreMediaBtn" class="btn ghost small hidden">Load more media</button>
@@ -139,8 +143,8 @@
       <label class="field">
         <span>Group work by</span>
         <select id="reportGrouping">
-          <option value="task" selected>Task / issue</option>
-          <option value="epic">Epic (falls back to No Epic if unavailable)</option>
+          <option value="task" selected>Task / issue (no grouping)</option>
+          <option value="epic">Epic groups</option>
         </select>
       </label>
 

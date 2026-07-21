@@ -285,8 +285,9 @@ ipcMain.handle('jira:cancel', async () => {
 
 // ---------- IPC: preload media for report ----------
 
-ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
+ipcMain.handle('jira:preloadMedia', async (event, payload) => {
   cancelRequested = false;
+  const send = (data) => event.sender.send('preload:progress', data);
 
   const base = normalizeSite(payload.site);
   const { email, token } = payload;
@@ -302,6 +303,7 @@ ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
   const maxItems = Math.max(50, Math.min(Number(payload.maxItems) || 1500, 5000));
 
   try {
+    send({ type: 'status', message: 'Scanning Jira issues for media…' });
     const issueResult = await fetchIssuesWithAttachments({ base, auth, projects, dateFrom });
     if (issueResult.cancelled) return { ok: false, cancelled: true };
     if (issueResult.error) return { ok: false, error: issueResult.error };
@@ -326,7 +328,11 @@ ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
       }
     }
 
+    const progressTotal = Math.min(totalCandidates, maxItems);
+    send({ type: 'begin', total: progressTotal, message: `Preparing to cache ${progressTotal} media file(s)…` });
+
     let cached = 0;
+    let processed = 0;
     let truncated = false;
     for (const issue of issueResult.issues) {
       const attachments = (issue.fields && issue.fields.attachment) || [];
@@ -355,6 +361,8 @@ ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
 
         if (cancelRequested) return { ok: false, cancelled: true };
 
+        processed += 1;
+
         const issueDir = path.join(cacheRoot, sanitize(issue.key));
         await fsp.mkdir(issueDir, { recursive: true });
         const safeName = sanitize(att.filename || `attachment-${att.id}`);
@@ -382,8 +390,22 @@ ipcMain.handle('jira:preloadMedia', async (_event, payload) => {
             localPath,
             localUri: toFileUri(localPath)
           });
+          send({
+            type: 'progress',
+            current: processed,
+            total: progressTotal,
+            cached,
+            message: `${issue.key} · ${safeName}`
+          });
         } catch (_err) {
           // Ignore individual media failures and continue.
+          send({
+            type: 'progress',
+            current: processed,
+            total: progressTotal,
+            cached,
+            message: `Skipped one file from ${issue.key}`
+          });
         }
       }
 
@@ -435,78 +457,97 @@ ipcMain.handle('jira:generateReport', async (_event, payload) => {
       copiedItems.push({ ...item, reportMediaFile: path.basename(dest) });
     }
 
-    const groups = new Map();
-    for (const item of copiedItems) {
-      const groupKey = grouping === 'epic'
-        ? (item.epicKey ? `${item.epicKey} ${item.epicSummary || ''}`.trim() : 'No Epic')
-        : `${item.issueKey} ${item.issueSummary || ''}`.trim();
-      if (!groups.has(groupKey)) groups.set(groupKey, []);
-      groups.get(groupKey).push(item);
-    }
-
     const accomplishedNotes = String(payload.accomplishedNotes || '').trim();
     const todoNotes = String(payload.todoNotes || '').trim();
 
-    const groupBlocks = [...groups.entries()].map(([groupName, itemsInGroup]) => {
-      const byIssue = new Map();
-      for (const item of itemsInGroup) {
-        if (!byIssue.has(item.issueKey)) byIssue.set(item.issueKey, []);
-        byIssue.get(item.issueKey).push(item);
-      }
+    const byIssueGlobal = new Map();
+    for (const item of copiedItems) {
+      if (!byIssueGlobal.has(item.issueKey)) byIssueGlobal.set(item.issueKey, []);
+      byIssueGlobal.get(item.issueKey).push(item);
+    }
 
-      const issueBlocks = [...byIssue.entries()].map(([issueKey, issueItems]) => {
-        const first = issueItems[0];
-        const desc = escapeHtml(first.issueDescription || 'No description provided.').replace(/\n/g, '<br/>');
-        const mediaHtml = issueItems.map((m) => {
-          const src = `media/${encodeURIComponent(m.reportMediaFile)}`;
-          const meta = `${escapeHtml(m.fileName)} · ${escapeHtml(m.status)} · ${formatBytes(m.bytes || 0)}`;
-          if ((m.mimeType || '').startsWith('video/')) {
-            return `<figure class="media-card"><video controls preload="metadata" src="${src}"></video><figcaption>${meta}</figcaption></figure>`;
-          }
-          return `<figure class="media-card"><img loading="lazy" src="${src}" alt="${escapeHtml(m.fileName)}"/><figcaption>${meta}</figcaption></figure>`;
-        }).join('');
-
-        const accomplished = isDoneStatus(first.status)
-          ? `<li><strong>${escapeHtml(issueKey)}:</strong> ${escapeHtml(first.issueSummary || '')}</li>`
-          : '';
-        const pending = !isDoneStatus(first.status)
-          ? `<li><strong>${escapeHtml(issueKey)}:</strong> ${escapeHtml(first.issueSummary || '')}</li>`
-          : '';
-
-        return {
-          html: `
-            <article class="issue-block">
-              <h4>${escapeHtml(issueKey)} · ${escapeHtml(first.issueSummary || '')}</h4>
-              <p class="status-chip">Status: ${escapeHtml(first.status || 'Unknown')}</p>
-              <p class="desc">${desc}</p>
-              <div class="media-grid">${mediaHtml}</div>
-            </article>
-          `,
-          accomplished,
-          pending
-        };
-      });
-
-      const accomplishedList = issueBlocks.map((b) => b.accomplished).filter(Boolean).join('') || '<li>None marked done in this group yet.</li>';
-      const pendingList = issueBlocks.map((b) => b.pending).filter(Boolean).join('') || '<li>No open items in this group.</li>';
+    const renderIssueBlock = (issueKey, issueItems) => {
+      const first = issueItems[0];
+      const descText = (first.issueDescription || '').trim();
+      const desc = descText ? `<p class="desc">${escapeHtml(descText).replace(/\n/g, '<br/>')}</p>` : '';
+      const mediaHtml = issueItems.map((m) => {
+        const src = `media/${encodeURIComponent(m.reportMediaFile)}`;
+        const meta = `${escapeHtml(m.fileName)} · ${formatBytes(m.bytes || 0)}`;
+        if ((m.mimeType || '').startsWith('video/')) {
+          return `<figure class="media-card"><video controls preload="metadata" src="${src}"></video><figcaption>${meta}</figcaption></figure>`;
+        }
+        return `<figure class="media-card"><img loading="lazy" src="${src}" alt="${escapeHtml(m.fileName)}"/><figcaption>${meta}</figcaption></figure>`;
+      }).join('');
 
       return `
+        <article class="issue-block">
+          <h4>${escapeHtml(issueKey)} · ${escapeHtml(first.issueSummary || '')}</h4>
+          ${desc}
+          <div class="media-grid">${mediaHtml}</div>
+        </article>
+      `;
+    };
+
+    const buildProgressSummary = (issueEntries) => {
+      const accomplishedList = issueEntries
+        .filter(([, issueItems]) => isDoneStatus(issueItems[0].status))
+        .map(([issueKey, issueItems]) => `<li><strong>${escapeHtml(issueKey)}:</strong> ${escapeHtml(issueItems[0].issueSummary || '')}</li>`)
+        .join('');
+      const pendingList = issueEntries
+        .filter(([, issueItems]) => !isDoneStatus(issueItems[0].status))
+        .map(([issueKey, issueItems]) => `<li><strong>${escapeHtml(issueKey)}:</strong> ${escapeHtml(issueItems[0].issueSummary || '')}</li>`)
+        .join('');
+
+      if (!accomplishedList && !pendingList) return '';
+
+      const accomplishedBlock = accomplishedList
+        ? `<div><h5>Accomplished</h5><ul>${accomplishedList}</ul></div>`
+        : '';
+      const pendingBlock = pendingList
+        ? `<div><h5>Yet To Be Accomplished</h5><ul>${pendingList}</ul></div>`
+        : '';
+
+      return `<div class="summary-grid">${accomplishedBlock}${pendingBlock}</div>`;
+    };
+
+    let groupBlocks = '';
+    if (grouping === 'task') {
+      const issueEntries = [...byIssueGlobal.entries()];
+      const summary = buildProgressSummary(issueEntries);
+      const issueHtml = issueEntries.map(([issueKey, issueItems]) => renderIssueBlock(issueKey, issueItems)).join('');
+      groupBlocks = `
         <section class="group">
-          <h3>${escapeHtml(groupName)}</h3>
-          <div class="summary-grid">
-            <div>
-              <h5>Accomplished</h5>
-              <ul>${accomplishedList}</ul>
-            </div>
-            <div>
-              <h5>Yet To Be Accomplished</h5>
-              <ul>${pendingList}</ul>
-            </div>
-          </div>
-          ${issueBlocks.map((b) => b.html).join('')}
+          ${summary}
+          ${issueHtml}
         </section>
       `;
-    }).join('');
+    } else {
+      const groups = new Map();
+      for (const item of copiedItems) {
+        const groupKey = item.epicKey ? `${item.epicKey} ${item.epicSummary || ''}`.trim() : 'Additional Tasks';
+        if (!groups.has(groupKey)) groups.set(groupKey, []);
+        groups.get(groupKey).push(item);
+      }
+
+      groupBlocks = [...groups.entries()].map(([groupName, itemsInGroup]) => {
+        const byIssue = new Map();
+        for (const item of itemsInGroup) {
+          if (!byIssue.has(item.issueKey)) byIssue.set(item.issueKey, []);
+          byIssue.get(item.issueKey).push(item);
+        }
+        const issueEntries = [...byIssue.entries()];
+        const summary = buildProgressSummary(issueEntries);
+        const issueHtml = issueEntries.map(([issueKey, issueItems]) => renderIssueBlock(issueKey, issueItems)).join('');
+
+        return `
+          <section class="group">
+            <h3>${escapeHtml(groupName)}</h3>
+            ${summary}
+            ${issueHtml}
+          </section>
+        `;
+      }).join('');
+    }
 
     const projects = parseProjectKeys(payload.projectKey || '').join(', ');
     const dateLine = [payload.dateFrom || 'Any start', payload.dateTo || 'Any end'].join(' to ');
@@ -537,7 +578,6 @@ ipcMain.handle('jira:generateReport', async (_event, payload) => {
     ul { margin: 0; padding-left: 18px; }
     .issue-block { border-top: 1px solid #e5e7eb; padding-top: 14px; margin-top: 14px; }
     .issue-block h4 { margin: 0 0 8px; }
-    .status-chip { display: inline-block; margin: 0 0 8px; padding: 4px 10px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 12px; }
     .desc { margin: 0 0 12px; color: #374151; line-height: 1.5; }
     .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
     .media-card { margin: 0; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; background: #f9fafb; }

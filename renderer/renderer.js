@@ -28,6 +28,8 @@ const els = {
   selectAllMediaBtn: $('selectAllMediaBtn'),
   clearMediaBtn: $('clearMediaBtn'),
   mediaStatus: $('mediaStatus'),
+  preloadProgressBar: $('preloadProgressBar'),
+  preloadCounter: $('preloadCounter'),
   mediaList: $('mediaList'),
   loadMoreMediaBtn: $('loadMoreMediaBtn'),
   reportTitle: $('reportTitle'),
@@ -352,6 +354,11 @@ function updateMediaActionsEnabled() {
   els.generateReportBtn.disabled = selectedMediaIds.size === 0;
 }
 
+function resetPreloadProgress() {
+  els.preloadProgressBar.style.width = '0%';
+  els.preloadCounter.textContent = '';
+}
+
 function renderMediaList() {
   const visible = preloadedMedia.slice(0, visibleMediaCount || MEDIA_BATCH_SIZE);
   els.mediaList.innerHTML = '';
@@ -392,9 +399,13 @@ function renderMediaList() {
     const src = encodeURI(item.localUri || '');
     let preview;
     if ((item.mimeType || '').startsWith('video/')) {
-      preview = document.createElement('div');
-      preview.className = 'media-video-placeholder';
-      preview.textContent = 'Video file (preview disabled for stability)';
+      preview = document.createElement('video');
+      preview.className = 'media-preview media-video-preview';
+      preview.src = src;
+      preview.controls = true;
+      preview.preload = 'none';
+      preview.playsInline = true;
+      preview.muted = true;
     } else {
       preview = document.createElement('img');
       preview.className = 'media-preview';
@@ -448,6 +459,26 @@ els.preloadMediaBtn.addEventListener('click', async () => {
   setReportBusy(true);
   els.mediaStatus.className = 'status-line load';
   els.mediaStatus.textContent = 'Preloading media… this may take a while for large projects.';
+  resetPreloadProgress();
+
+  const removePreloadProgress = window.api.onPreloadProgress((data) => {
+    if (data.type === 'status') {
+      els.mediaStatus.textContent = data.message;
+      return;
+    }
+    if (data.type === 'begin') {
+      els.preloadCounter.textContent = `0 / ${data.total}`;
+      els.mediaStatus.textContent = data.message;
+      return;
+    }
+    if (data.type === 'progress') {
+      const total = Math.max(data.total || 1, 1);
+      const current = Math.min(data.current || 0, total);
+      const pct = Math.round((current / total) * 100);
+      els.preloadProgressBar.style.width = `${pct}%`;
+      els.preloadCounter.textContent = `${current} / ${total} cached: ${data.cached || 0}`;
+    }
+  });
 
   try {
     const result = await window.api.preloadMedia(buildBasePayload());
@@ -467,6 +498,12 @@ els.preloadMediaBtn.addEventListener('click', async () => {
     visibleMediaCount = Math.min(preloadedMedia.length, MEDIA_BATCH_SIZE);
     renderMediaList();
 
+    if (result.preloaded > 0) {
+      els.preloadProgressBar.style.width = '100%';
+      const finalTotal = Math.min(result.totalCandidates || result.preloaded, result.maxItems || result.preloaded);
+      els.preloadCounter.textContent = `${finalTotal} / ${finalTotal} cached: ${result.preloaded}`;
+    }
+
     els.mediaStatus.className = 'status-line ok';
     els.mediaStatus.textContent = `Preloaded ${result.preloaded} media files (${result.totalCandidates} found). ${result.truncated ? `Showing first ${result.maxItems} to keep the app stable.` : ''} Select the ones to include.`;
     log(`Preloaded media for report: ${result.preloaded} file(s).`, 'info');
@@ -474,6 +511,7 @@ els.preloadMediaBtn.addEventListener('click', async () => {
     els.mediaStatus.className = 'status-line err';
     els.mediaStatus.textContent = err.message;
   } finally {
+    removePreloadProgress();
     setReportBusy(false);
   }
 });
