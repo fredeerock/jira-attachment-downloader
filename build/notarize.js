@@ -13,6 +13,7 @@
 // which comes with a paid Apple Developer Program membership.
 
 const { notarize } = require('@electron/notarize');
+const { execFileSync } = require('child_process');
 
 module.exports = async function notarizing(context) {
   const { electronPlatformName, appOutDir } = context;
@@ -20,8 +21,18 @@ module.exports = async function notarizing(context) {
 
   const { APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID } = process.env;
   if (!APPLE_ID || !APPLE_APP_SPECIFIC_PASSWORD || !APPLE_TEAM_ID) {
-    console.log('\n  • Skipping notarization: APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID not set.\n');
-    return;
+    if (process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') {
+      console.log('\n  • Skipping notarization for the explicit unsigned build.\n');
+      return;
+    }
+
+    throw new Error(
+      'Cannot create a macOS release without notarization credentials. Set APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID, or use npm run dist:mac:unsigned for local testing.'
+    );
+  }
+
+  if (process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') {
+    throw new Error('Notarization requires code signing; do not combine Apple credentials with the unsigned build.');
   }
 
   const appName = context.packager.appInfo.productFilename;
@@ -36,6 +47,8 @@ module.exports = async function notarizing(context) {
     appleIdPassword: APPLE_APP_SPECIFIC_PASSWORD,
     teamId: APPLE_TEAM_ID
   });
+
+  execFileSync('xcrun', ['stapler', 'staple', appPath], { stdio: 'inherit' });
 
   console.log(`\n  • Notarization complete for ${appName}.app\n`);
 };

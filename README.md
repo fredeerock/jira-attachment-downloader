@@ -71,8 +71,9 @@ Run anyway**.
 
 ## Signing & notarizing the macOS app
 
-By default `npm run dist:mac` will code-sign and notarize the app so users don't
-see the "unidentified developer" / Gatekeeper warning. This requires:
+`npm run dist:mac` only creates a distributable macOS app when it can code-sign
+and notarize it, so users don't see the "unidentified developer" / Gatekeeper
+warning. This requires:
 
 1. A paid **Apple Developer Program** membership.
 2. A **Developer ID Application** certificate installed in your login keychain
@@ -94,6 +95,10 @@ npm run dist:mac
 The signing certificate is picked up automatically from your keychain, and the
 app is notarized via Apple's notary service (this can take a few minutes). The
 resulting `.dmg` opens with no Gatekeeper warning.
+
+The build fails early if the certificate or credentials are missing. Do not
+distribute an artifact from `npm run dist:mac:unsigned`: macOS may identify it
+as malware or an unidentified developer and move it to Trash.
 
 > **Why the build outputs to `/tmp`:** recent macOS attaches a
 > `com.apple.provenance` extended attribute to files created inside
