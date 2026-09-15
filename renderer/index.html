@@ -63,6 +63,11 @@
           </small>
         </label>
 
+        <label class="checkbox">
+          <input id="rememberToken" type="checkbox" />
+          <span>Remember API key on this device</span>
+        </label>
+
         <button id="testBtn" class="btn ghost">Test connection</button>
         <div id="testResult" class="status-line"></div>
       </section>
@@ -104,9 +109,14 @@
           </div>
         </label>
 
-        <label class="checkbox">
-          <input id="groupByIssue" type="checkbox" checked />
-          <span>Organize into a subfolder per issue</span>
+        <label class="field">
+          <span>Organize downloaded files into subfolders by</span>
+          <select id="downloadGroupBy">
+            <option value="issue" selected>Issue</option>
+            <option value="epic">Epic</option>
+            <option value="person">Person (assignee)</option>
+            <option value="none">No subfolders</option>
+          </select>
         </label>
 
         <button id="downloadBtn" class="btn primary">Download all attachments</button>
@@ -143,8 +153,28 @@
       <label class="field">
         <span>Group work by</span>
         <select id="reportGrouping">
-          <option value="task" selected>Task / issue (no grouping)</option>
+          <option value="none" selected>No grouping (flat list)</option>
           <option value="epic">Epic groups</option>
+          <option value="person">Person (assignee)</option>
+        </select>
+        <small class="hint">The generated report also lets viewers switch grouping interactively.</small>
+      </label>
+
+      <label class="field">
+        <span>Organize media files into subfolders by</span>
+        <select id="mediaOrganize">
+          <option value="none" selected>No subfolders</option>
+          <option value="issue">Issue</option>
+          <option value="epic">Epic</option>
+          <option value="person">Person (assignee)</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Export format</span>
+        <select id="exportFormat">
+          <option value="html" selected>HTML report (interactive)</option>
+          <option value="pdf">HTML + PDF report</option>
         </select>
       </label>
 

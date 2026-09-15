@@ -143,6 +143,10 @@ function statusName(issue) {
   return (issue && issue.fields && issue.fields.status && issue.fields.status.name) || 'Unknown';
 }
 
+function assigneeName(issue) {
+  return (issue && issue.fields && issue.fields.assignee && issue.fields.assignee.displayName) || 'Unassigned';
+}
+
 function isDoneStatus(name) {
   return /(done|closed|resolved|complete|completed)/i.test(name || '');
 }
@@ -163,7 +167,7 @@ async function fetchIssuesWithAttachments({ base, auth, projects, dateFrom }) {
     if (cancelRequested) return { cancelled: true };
     const url = new URL(`${base}/rest/api/3/search/jql`);
     url.searchParams.set('jql', jql);
-    url.searchParams.set('fields', 'attachment,key,summary,description,status,parent,issuetype');
+    url.searchParams.set('fields', 'attachment,key,summary,description,status,parent,issuetype,assignee');
     url.searchParams.set('maxResults', '100');
     if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
 
@@ -344,6 +348,7 @@ ipcMain.handle('jira:preloadMedia', async (event, payload) => {
       const parentIssueType = parent && parent.fields && parent.fields.issuetype && parent.fields.issuetype.name;
       const epicKey = parentIssueType === 'Epic' ? parent.key : '';
       const epicSummary = parentIssueType === 'Epic' && parent.fields ? (parent.fields.summary || '') : '';
+      const assignee = assigneeName(issue);
 
       for (const att of attachments) {
         const created = att.created ? Date.parse(att.created) : NaN;
@@ -383,6 +388,7 @@ ipcMain.handle('jira:preloadMedia', async (event, payload) => {
             status,
             epicKey,
             epicSummary,
+            assigneeName: assignee,
             fileName: safeName,
             mimeType: (att.mimeType || '').toLowerCase(),
             created: att.created || '',
@@ -433,7 +439,9 @@ ipcMain.handle('jira:generateReport', async (_event, payload) => {
     const outputDir = (payload.outputDir || '').trim();
     const selectedIds = Array.isArray(payload.selectedIds) ? payload.selectedIds : [];
     const mediaItems = Array.isArray(payload.mediaItems) ? payload.mediaItems : [];
-    const grouping = payload.grouping === 'epic' ? 'epic' : 'task';
+    const grouping = ['epic', 'person'].includes(payload.grouping) ? payload.grouping : 'none';
+    const mediaOrganize = ['issue', 'epic', 'person'].includes(payload.mediaOrganize) ? payload.mediaOrganize : 'none';
+    const format = payload.format === 'pdf' ? 'pdf' : 'html';
     const reportTitle = (payload.reportTitle || 'Stakeholder Report').trim();
 
     if (!outputDir) return { ok: false, error: 'Choose a download folder first.' };
@@ -448,13 +456,24 @@ ipcMain.handle('jira:generateReport', async (_event, payload) => {
     const mediaDir = path.join(rootDir, 'media');
     await fsp.mkdir(mediaDir, { recursive: true });
 
+    const mediaSubfolderFor = (item) => {
+      if (mediaOrganize === 'issue') return sanitize(item.issueKey);
+      if (mediaOrganize === 'epic') return sanitize(item.epicKey ? `${item.epicKey} ${item.epicSummary || ''}`.trim() : 'No Epic');
+      if (mediaOrganize === 'person') return sanitize(item.assigneeName || 'Unassigned');
+      return '';
+    };
+
     const copiedItems = [];
     for (const item of selected) {
       const ext = path.extname(item.fileName || '') || (item.mimeType.startsWith('video/') ? '.mp4' : '.jpg');
       const base = sanitize(`${item.issueKey}_${path.basename(item.fileName || 'media', ext)}`);
-      const dest = await uniquePath(mediaDir, `${base}${ext}`);
+      const subfolder = mediaSubfolderFor(item);
+      const destDir = subfolder ? path.join(mediaDir, subfolder) : mediaDir;
+      await fsp.mkdir(destDir, { recursive: true });
+      const dest = await uniquePath(destDir, `${base}${ext}`);
       await fsp.copyFile(item.localPath, dest);
-      copiedItems.push({ ...item, reportMediaFile: path.basename(dest) });
+      const relFile = subfolder ? `${subfolder}/${path.basename(dest)}` : path.basename(dest);
+      copiedItems.push({ ...item, reportMediaFile: relFile });
     }
 
     const accomplishedNotes = String(payload.accomplishedNotes || '').trim();
@@ -462,92 +481,27 @@ ipcMain.handle('jira:generateReport', async (_event, payload) => {
 
     const byIssueGlobal = new Map();
     for (const item of copiedItems) {
-      if (!byIssueGlobal.has(item.issueKey)) byIssueGlobal.set(item.issueKey, []);
-      byIssueGlobal.get(item.issueKey).push(item);
-    }
-
-    const renderIssueBlock = (issueKey, issueItems) => {
-      const first = issueItems[0];
-      const descText = (first.issueDescription || '').trim();
-      const desc = descText ? `<p class="desc">${escapeHtml(descText).replace(/\n/g, '<br/>')}</p>` : '';
-      const mediaHtml = issueItems.map((m) => {
-        const src = `media/${encodeURIComponent(m.reportMediaFile)}`;
-        const meta = `${escapeHtml(m.fileName)} · ${formatBytes(m.bytes || 0)}`;
-        if ((m.mimeType || '').startsWith('video/')) {
-          return `<figure class="media-card"><video controls preload="metadata" src="${src}"></video><figcaption>${meta}</figcaption></figure>`;
-        }
-        return `<figure class="media-card"><img loading="lazy" src="${src}" alt="${escapeHtml(m.fileName)}"/><figcaption>${meta}</figcaption></figure>`;
-      }).join('');
-
-      return `
-        <article class="issue-block">
-          <h4>${escapeHtml(issueKey)} · ${escapeHtml(first.issueSummary || '')}</h4>
-          ${desc}
-          <div class="media-grid">${mediaHtml}</div>
-        </article>
-      `;
-    };
-
-    const buildProgressSummary = (issueEntries) => {
-      const accomplishedList = issueEntries
-        .filter(([, issueItems]) => isDoneStatus(issueItems[0].status))
-        .map(([issueKey, issueItems]) => `<li><strong>${escapeHtml(issueKey)}:</strong> ${escapeHtml(issueItems[0].issueSummary || '')}</li>`)
-        .join('');
-      const pendingList = issueEntries
-        .filter(([, issueItems]) => !isDoneStatus(issueItems[0].status))
-        .map(([issueKey, issueItems]) => `<li><strong>${escapeHtml(issueKey)}:</strong> ${escapeHtml(issueItems[0].issueSummary || '')}</li>`)
-        .join('');
-
-      if (!accomplishedList && !pendingList) return '';
-
-      const accomplishedBlock = accomplishedList
-        ? `<div><h5>Accomplished</h5><ul>${accomplishedList}</ul></div>`
-        : '';
-      const pendingBlock = pendingList
-        ? `<div><h5>Yet To Be Accomplished</h5><ul>${pendingList}</ul></div>`
-        : '';
-
-      return `<div class="summary-grid">${accomplishedBlock}${pendingBlock}</div>`;
-    };
-
-    let groupBlocks = '';
-    if (grouping === 'task') {
-      const issueEntries = [...byIssueGlobal.entries()];
-      const summary = buildProgressSummary(issueEntries);
-      const issueHtml = issueEntries.map(([issueKey, issueItems]) => renderIssueBlock(issueKey, issueItems)).join('');
-      groupBlocks = `
-        <section class="group">
-          ${summary}
-          ${issueHtml}
-        </section>
-      `;
-    } else {
-      const groups = new Map();
-      for (const item of copiedItems) {
-        const groupKey = item.epicKey ? `${item.epicKey} ${item.epicSummary || ''}`.trim() : 'Additional Tasks';
-        if (!groups.has(groupKey)) groups.set(groupKey, []);
-        groups.get(groupKey).push(item);
+      if (!byIssueGlobal.has(item.issueKey)) {
+        byIssueGlobal.set(item.issueKey, {
+          issueKey: item.issueKey,
+          issueSummary: item.issueSummary || '',
+          issueDescription: item.issueDescription || '',
+          status: item.status || 'Unknown',
+          epicKey: item.epicKey || '',
+          epicSummary: item.epicSummary || '',
+          assigneeName: item.assigneeName || 'Unassigned',
+          media: []
+        });
       }
-
-      groupBlocks = [...groups.entries()].map(([groupName, itemsInGroup]) => {
-        const byIssue = new Map();
-        for (const item of itemsInGroup) {
-          if (!byIssue.has(item.issueKey)) byIssue.set(item.issueKey, []);
-          byIssue.get(item.issueKey).push(item);
-        }
-        const issueEntries = [...byIssue.entries()];
-        const summary = buildProgressSummary(issueEntries);
-        const issueHtml = issueEntries.map(([issueKey, issueItems]) => renderIssueBlock(issueKey, issueItems)).join('');
-
-        return `
-          <section class="group">
-            <h3>${escapeHtml(groupName)}</h3>
-            ${summary}
-            ${issueHtml}
-          </section>
-        `;
-      }).join('');
+      byIssueGlobal.get(item.issueKey).media.push({
+        fileName: item.fileName,
+        mimeType: item.mimeType || '',
+        bytes: item.bytes || 0,
+        reportMediaFile: item.reportMediaFile
+      });
     }
+
+    const issuesData = [...byIssueGlobal.values()];
 
     const projects = parseProjectKeys(payload.projectKey || '').join(', ');
     const dateLine = [payload.dateFrom || 'Any start', payload.dateTo || 'Any end'].join(' to ');
@@ -557,6 +511,10 @@ ipcMain.handle('jira:generateReport', async (_event, payload) => {
     const manualTodo = todoNotes
       ? `<section class="manual-notes"><h3>Project Remaining Work (Manual Notes)</h3><p>${escapeHtml(todoNotes).replace(/\n/g, '<br/>')}</p></section>`
       : '';
+
+    // Embed the issue/media data as JSON so the report can regroup itself
+    // client-side (no grouping/epic/person/none) without needing a server.
+    const dataJson = JSON.stringify(issuesData).replace(/</g, '\\u003c');
 
     const html = `<!doctype html>
 <html lang="en">
@@ -571,6 +529,12 @@ ipcMain.handle('jira:generateReport', async (_event, payload) => {
     .hero { background: linear-gradient(135deg, #312e81, #6d28d9); color: #fff; border-radius: 16px; padding: 24px; }
     .hero h1 { margin: 0 0 8px; font-size: 30px; }
     .hero p { margin: 4px 0; color: #ddd6fe; }
+    .hero-controls { margin-top: 14px; display: flex; align-items: center; gap: 8px; }
+    .hero-controls label { color: #ede9fe; font-size: 13px; }
+    .hero-controls select { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.4); background: rgba(255,255,255,0.12); color: #fff; }
+    .hero-controls select option { color: #111827; }
+    .no-print { }
+    @media print { .no-print { display: none !important; } }
     .manual-notes, .group { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; margin-top: 18px; }
     .group h3 { margin: 0 0 12px; }
     .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -596,21 +560,139 @@ ipcMain.handle('jira:generateReport', async (_event, payload) => {
       <p><strong>Projects:</strong> ${escapeHtml(projects || 'N/A')}</p>
       <p><strong>Date Range:</strong> ${escapeHtml(dateLine)}</p>
       <p><strong>Generated:</strong> ${escapeHtml(new Date().toLocaleString())}</p>
-      <p><strong>Grouping:</strong> ${escapeHtml(grouping === 'epic' ? 'Epic' : 'Task')}</p>
+      <div class="hero-controls no-print">
+        <label for="groupSelect">Group by:</label>
+        <select id="groupSelect">
+          <option value="none">No grouping</option>
+          <option value="epic">Epic</option>
+          <option value="person">Person</option>
+        </select>
+      </div>
     </header>
     ${manualAccomplished}
     ${manualTodo}
-    ${groupBlocks}
+    <div id="groupBlocks"></div>
   </div>
+  <script id="report-data" type="application/json">${dataJson}</script>
+  <script>
+    (function () {
+      function escapeHtml(s) {
+        return String(s || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+      function formatBytes(bytes) {
+        if (!bytes) return '0 B';
+        var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        var i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+      }
+      function isDoneStatus(name) {
+        return /(done|closed|resolved|complete|completed)/i.test(name || '');
+      }
+
+      var issues = JSON.parse(document.getElementById('report-data').textContent);
+
+      function renderIssueBlock(issue) {
+        var descText = (issue.issueDescription || '').trim();
+        var desc = descText ? '<p class="desc">' + escapeHtml(descText).replace(/\\n/g, '<br/>') + '</p>' : '';
+        var mediaHtml = issue.media.map(function (m) {
+          var src = 'media/' + m.reportMediaFile.split('/').map(encodeURIComponent).join('/');
+          var meta = escapeHtml(m.fileName) + ' · ' + formatBytes(m.bytes || 0);
+          if ((m.mimeType || '').indexOf('video/') === 0) {
+            return '<figure class="media-card"><video controls preload="metadata" src="' + src + '"></video><figcaption>' + meta + '</figcaption></figure>';
+          }
+          return '<figure class="media-card"><img loading="lazy" src="' + src + '" alt="' + escapeHtml(m.fileName) + '"/><figcaption>' + meta + '</figcaption></figure>';
+        }).join('');
+
+        return '<article class="issue-block"><h4>' + escapeHtml(issue.issueKey) + ' · ' + escapeHtml(issue.issueSummary || '') + '</h4>' +
+          desc + '<div class="media-grid">' + mediaHtml + '</div></article>';
+      }
+
+      function buildProgressSummary(issuesInGroup) {
+        var accomplished = issuesInGroup.filter(function (i) { return isDoneStatus(i.status); })
+          .map(function (i) { return '<li><strong>' + escapeHtml(i.issueKey) + ':</strong> ' + escapeHtml(i.issueSummary || '') + '</li>'; })
+          .join('');
+        var pending = issuesInGroup.filter(function (i) { return !isDoneStatus(i.status); })
+          .map(function (i) { return '<li><strong>' + escapeHtml(i.issueKey) + ':</strong> ' + escapeHtml(i.issueSummary || '') + '</li>'; })
+          .join('');
+        if (!accomplished && !pending) return '';
+        var a = accomplished ? '<div><h5>Accomplished</h5><ul>' + accomplished + '</ul></div>' : '';
+        var p = pending ? '<div><h5>Yet To Be Accomplished</h5><ul>' + pending + '</ul></div>' : '';
+        return '<div class="summary-grid">' + a + p + '</div>';
+      }
+
+      function render(mode) {
+        var html = '';
+        if (mode === 'epic') {
+          var groups = new Map();
+          issues.forEach(function (issue) {
+            var key = issue.epicKey ? (issue.epicKey + ' ' + (issue.epicSummary || '')).trim() : 'Additional Tasks';
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(issue);
+          });
+          groups.forEach(function (issuesInGroup, groupName) {
+            html += '<section class="group"><h3>' + escapeHtml(groupName) + '</h3>' +
+              buildProgressSummary(issuesInGroup) +
+              issuesInGroup.map(renderIssueBlock).join('') + '</section>';
+          });
+        } else if (mode === 'person') {
+          var byPerson = new Map();
+          issues.forEach(function (issue) {
+            var key = issue.assigneeName || 'Unassigned';
+            if (!byPerson.has(key)) byPerson.set(key, []);
+            byPerson.get(key).push(issue);
+          });
+          byPerson.forEach(function (issuesInGroup, groupName) {
+            html += '<section class="group"><h3>' + escapeHtml(groupName) + '</h3>' +
+              buildProgressSummary(issuesInGroup) +
+              issuesInGroup.map(renderIssueBlock).join('') + '</section>';
+          });
+        } else {
+          html += '<section class="group">' + buildProgressSummary(issues) + issues.map(renderIssueBlock).join('') + '</section>';
+        }
+        document.getElementById('groupBlocks').innerHTML = html;
+      }
+
+      var select = document.getElementById('groupSelect');
+      select.value = ${JSON.stringify(grouping)};
+      select.addEventListener('change', function () { render(select.value); });
+      render(select.value);
+    })();
+  </script>
 </body>
 </html>`;
 
     const reportPath = path.join(rootDir, 'index.html');
     await fsp.writeFile(reportPath, html, 'utf8');
 
+    let pdfPath = null;
+    if (format === 'pdf') {
+      const pdfWin = new BrowserWindow({
+        show: false,
+        webPreferences: { offscreen: true }
+      });
+      try {
+        await pdfWin.loadFile(reportPath);
+        const pdfBuffer = await pdfWin.webContents.printToPDF({
+          printBackground: true,
+          pageSize: 'Letter',
+          preferCSSPageSize: false
+        });
+        pdfPath = path.join(rootDir, 'report.pdf');
+        await fsp.writeFile(pdfPath, pdfBuffer);
+      } finally {
+        pdfWin.destroy();
+      }
+    }
+
     return {
       ok: true,
       reportPath,
+      pdfPath,
       rootDir,
       mediaCount: copiedItems.length
     };
@@ -627,7 +709,9 @@ ipcMain.handle('jira:download', async (event, payload) => {
 
   const base = normalizeSite(payload.site);
   const { email, token, projectKey, outputDir } = payload;
-  const groupByIssue = payload.groupByIssue !== false;
+  const groupBy = ['issue', 'epic', 'person', 'none'].includes(payload.groupBy)
+    ? payload.groupBy
+    : (payload.groupByIssue === false ? 'none' : 'issue');
 
   if (!base || !email || !token) return { ok: false, error: 'Missing credentials.' };
   if (!projectKey) return { ok: false, error: 'Missing project key.' };
@@ -677,7 +761,7 @@ ipcMain.handle('jira:download', async (event, payload) => {
       if (cancelRequested) return { ok: false, cancelled: true };
       const url = new URL(`${base}/rest/api/3/search/jql`);
       url.searchParams.set('jql', jql);
-      url.searchParams.set('fields', 'attachment,key,summary');
+      url.searchParams.set('fields', 'attachment,key,summary,parent,issuetype,assignee');
       url.searchParams.set('maxResults', '100');
       if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
 
@@ -699,9 +783,14 @@ ipcMain.handle('jira:download', async (event, payload) => {
       for (const issue of data.issues || []) {
         const attachments = (issue.fields && issue.fields.attachment) || [];
         if (attachments.length) {
+          const parent = issue.fields && issue.fields.parent;
+          const parentIssueType = parent && parent.fields && parent.fields.issuetype && parent.fields.issuetype.name;
           issues.push({
             key: issue.key,
             summary: (issue.fields && issue.fields.summary) || '',
+            epicKey: parentIssueType === 'Epic' ? parent.key : '',
+            epicSummary: parentIssueType === 'Epic' && parent.fields ? (parent.fields.summary || '') : '',
+            assigneeName: assigneeName(issue),
             attachments
           });
         }
@@ -720,7 +809,13 @@ ipcMain.handle('jira:download', async (event, payload) => {
           if (fromMs != null && created < fromMs) continue;
           if (toMs != null && created > toMs) continue;
         }
-        allAttachments.push({ issueKey: issue.key, att });
+        allAttachments.push({
+          issueKey: issue.key,
+          epicKey: issue.epicKey,
+          epicSummary: issue.epicSummary,
+          assigneeName: issue.assigneeName,
+          att
+        });
       }
     }
 
@@ -740,10 +835,12 @@ ipcMain.handle('jira:download', async (event, payload) => {
       if (cancelRequested) {
         return { ok: false, cancelled: true, downloaded, failed, total, rootDir };
       }
-      const { issueKey, att } = allAttachments[i];
+      const { issueKey, epicKey, epicSummary, assigneeName: personName, att } = allAttachments[i];
       let targetDir = rootDir;
       if (projects.length > 1) targetDir = path.join(targetDir, sanitize(projectOf(issueKey)));
-      if (groupByIssue) targetDir = path.join(targetDir, sanitize(issueKey));
+      if (groupBy === 'issue') targetDir = path.join(targetDir, sanitize(issueKey));
+      else if (groupBy === 'epic') targetDir = path.join(targetDir, sanitize(epicKey ? `${epicKey} ${epicSummary || ''}`.trim() : 'No Epic'));
+      else if (groupBy === 'person') targetDir = path.join(targetDir, sanitize(personName || 'Unassigned'));
       await fsp.mkdir(targetDir, { recursive: true });
 
       const filename = sanitize(att.filename || `attachment-${att.id}`);

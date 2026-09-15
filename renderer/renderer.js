@@ -13,7 +13,8 @@ const els = {
   dateFrom: $('dateFrom'),
   dateTo: $('dateTo'),
   folder: $('folder'),
-  groupByIssue: $('groupByIssue'),
+  downloadGroupBy: $('downloadGroupBy'),
+  rememberToken: $('rememberToken'),
   testBtn: $('testBtn'),
   testResult: $('testResult'),
   folderBtn: $('folderBtn'),
@@ -34,6 +35,8 @@ const els = {
   loadMoreMediaBtn: $('loadMoreMediaBtn'),
   reportTitle: $('reportTitle'),
   reportGrouping: $('reportGrouping'),
+  mediaOrganize: $('mediaOrganize'),
+  exportFormat: $('exportFormat'),
   accomplishedNotes: $('accomplishedNotes'),
   todoNotes: $('todoNotes'),
   generateReportBtn: $('generateReportBtn')
@@ -63,11 +66,15 @@ function saveSettings() {
     dateFrom: els.dateFrom.value,
     dateTo: els.dateTo.value,
     folder: els.folder.value,
-    groupByIssue: els.groupByIssue.checked,
+    downloadGroupBy: els.downloadGroupBy.value,
     reportTitle: els.reportTitle.value,
     reportGrouping: els.reportGrouping.value,
+    mediaOrganize: els.mediaOrganize.value,
+    exportFormat: els.exportFormat.value,
     accomplishedNotes: els.accomplishedNotes.value,
-    todoNotes: els.todoNotes.value
+    todoNotes: els.todoNotes.value,
+    rememberToken: els.rememberToken.checked,
+    token: els.rememberToken.checked ? els.token.value : ''
   };
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
 }
@@ -83,21 +90,29 @@ function loadSettings() {
     els.dateFrom.value = data.dateFrom || '';
     els.dateTo.value = data.dateTo || '';
     els.folder.value = data.folder || '';
-    els.groupByIssue.checked = data.groupByIssue !== false;
+    els.downloadGroupBy.value = data.downloadGroupBy || 'issue';
     els.reportTitle.value = data.reportTitle || '';
-    els.reportGrouping.value = data.reportGrouping || 'task';
+    els.reportGrouping.value = data.reportGrouping || 'none';
+    els.mediaOrganize.value = data.mediaOrganize || 'none';
+    els.exportFormat.value = data.exportFormat || 'html';
     els.accomplishedNotes.value = data.accomplishedNotes || '';
     els.todoNotes.value = data.todoNotes || '';
+    els.rememberToken.checked = data.rememberToken === true;
+    els.token.value = data.rememberToken === true ? (data.token || '') : '';
   } catch (_) {}
 }
 
 [
   'site', 'email', 'project', 'dateFrom', 'dateTo',
-  'reportTitle', 'reportGrouping', 'accomplishedNotes', 'todoNotes'
+  'reportTitle', 'reportGrouping', 'mediaOrganize', 'exportFormat', 'accomplishedNotes', 'todoNotes'
 ].forEach((id) => {
   els[id].addEventListener('input', saveSettings);
 });
-els.groupByIssue.addEventListener('change', saveSettings);
+els.downloadGroupBy.addEventListener('change', saveSettings);
+els.rememberToken.addEventListener('change', saveSettings);
+els.token.addEventListener('input', () => {
+  if (els.rememberToken.checked) saveSettings();
+});
 
 // ---- Logging ----
 function log(message, kind) {
@@ -282,7 +297,7 @@ els.downloadBtn.addEventListener('click', async () => {
   const payload = {
     ...buildBasePayload(),
     outputDir: els.folder.value.trim(),
-    groupByIssue: els.groupByIssue.checked
+    groupBy: els.downloadGroupBy.value
   };
 
   log(`Starting download for projects ${payload.projectKey}…`, 'info');
@@ -424,7 +439,7 @@ function renderMediaList() {
     info.textContent = `${item.issueSummary || ''}`;
 
     const extra = document.createElement('span');
-    extra.textContent = `${formatBytes(item.bytes || 0)} · ${item.epicKey ? `Epic ${item.epicKey}` : 'No epic'}`;
+    extra.textContent = `${formatBytes(item.bytes || 0)} · ${item.epicKey ? `Epic ${item.epicKey}` : 'No epic'} · ${item.assigneeName || 'Unassigned'}`;
 
     meta.append(title, info, extra);
     wrap.append(top, preview, meta);
@@ -553,6 +568,8 @@ els.generateReportBtn.addEventListener('click', async () => {
       outputDir: els.folder.value.trim(),
       reportTitle: els.reportTitle.value.trim() || 'Stakeholder Report',
       grouping: els.reportGrouping.value,
+      mediaOrganize: els.mediaOrganize.value,
+      format: els.exportFormat.value,
       accomplishedNotes: els.accomplishedNotes.value,
       todoNotes: els.todoNotes.value,
       selectedIds: [...selectedMediaIds],
@@ -568,6 +585,7 @@ els.generateReportBtn.addEventListener('click', async () => {
     els.mediaStatus.className = 'status-line ok';
     els.mediaStatus.textContent = `Report generated with ${result.mediaCount} media item(s).`;
     log(`Stakeholder report created: ${result.reportPath}`, 'ok');
+    if (result.pdfPath) log(`PDF report created: ${result.pdfPath}`, 'ok');
     if (result.rootDir) window.api.openFolder(result.rootDir);
   } catch (err) {
     els.mediaStatus.className = 'status-line err';

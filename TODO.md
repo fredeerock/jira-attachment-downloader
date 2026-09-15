@@ -1,0 +1,5 @@
+- [x] Add the ability the group tasks by person 
+- [x] Add the ability to export the report as html or a pdf
+- [x] When exported as an html allow the user of the html to be able to group by epic, person, or no grouping
+- [x] add the ability to remember or not remember the api key 
+- [x] when exporting just the media allow for organizing into a subfolder per issue, person, or epic
