@@ -14,6 +14,7 @@ const els = {
   dateTo: $('dateTo'),
   folder: $('folder'),
   downloadGroupBy: $('downloadGroupBy'),
+  generateMarkdown: $('generateMarkdown'),
   rememberToken: $('rememberToken'),
   testBtn: $('testBtn'),
   testResult: $('testResult'),
@@ -67,6 +68,7 @@ function saveSettings() {
     dateTo: els.dateTo.value,
     folder: els.folder.value,
     downloadGroupBy: els.downloadGroupBy.value,
+    generateMarkdown: els.generateMarkdown.checked,
     reportTitle: els.reportTitle.value,
     reportGrouping: els.reportGrouping.value,
     mediaOrganize: els.mediaOrganize.value,
@@ -91,6 +93,7 @@ function loadSettings() {
     els.dateTo.value = data.dateTo || '';
     els.folder.value = data.folder || '';
     els.downloadGroupBy.value = data.downloadGroupBy || 'issue';
+    els.generateMarkdown.checked = data.generateMarkdown === true;
     els.reportTitle.value = data.reportTitle || '';
     els.reportGrouping.value = data.reportGrouping || 'none';
     els.mediaOrganize.value = data.mediaOrganize || 'none';
@@ -109,6 +112,7 @@ function loadSettings() {
   els[id].addEventListener('input', saveSettings);
 });
 els.downloadGroupBy.addEventListener('change', saveSettings);
+els.generateMarkdown.addEventListener('change', saveSettings);
 els.rememberToken.addEventListener('change', saveSettings);
 els.token.addEventListener('input', () => {
   if (els.rememberToken.checked) saveSettings();
@@ -297,7 +301,8 @@ els.downloadBtn.addEventListener('click', async () => {
   const payload = {
     ...buildBasePayload(),
     outputDir: els.folder.value.trim(),
-    groupBy: els.downloadGroupBy.value
+    groupBy: els.downloadGroupBy.value,
+    generateMarkdown: els.generateMarkdown.checked
   };
 
   log(`Starting download for projects ${payload.projectKey}…`, 'info');
@@ -332,6 +337,9 @@ els.downloadBtn.addEventListener('click', async () => {
         els.currentItem.textContent =
           `Done — ${result.downloaded} downloaded, ${result.failed} failed (${result.bytesLabel}).`;
         log(`Finished: ${result.downloaded} downloaded, ${result.failed} failed.`, 'ok');
+      }
+      if (result.markdownPath) {
+        log('Markdown metadata export: ' + result.markdownPath, 'ok');
       }
       if (result.rootDir) {
         log('Saved to: ' + result.rootDir, 'info');

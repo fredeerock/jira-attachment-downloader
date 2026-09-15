@@ -196,6 +196,419 @@ async function fetchIssuesWithAttachments({ base, auth, projects, dateFrom }) {
   return { issues };
 }
 
+// ---------- Markdown export helpers ----------
+
+function encodeMdPath(relPath) {
+  return String(relPath).split('/').map(encodeURIComponent).join('/');
+}
+
+function mdCell(value) {
+  return String(value == null ? '' : value)
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, '<br/>')
+    .trim();
+}
+
+function adfApplyMarks(text, marks) {
+  let out = text;
+  for (const mark of marks || []) {
+    if (mark.type === 'strong') out = `**${out}**`;
+    else if (mark.type === 'em') out = `*${out}*`;
+    else if (mark.type === 'code') out = '`' + out + '`';
+    else if (mark.type === 'strike') out = `~~${out}~~`;
+    else if (mark.type === 'link' && mark.attrs && mark.attrs.href) out = `[${out}](${mark.attrs.href})`;
+  }
+  return out;
+}
+
+// Converts Atlassian Document Format to Markdown. ctx.mediaById maps an ADF
+// media id to a ready-to-embed markdown snippet for a downloaded attachment.
+function adfToMarkdown(node, ctx = {}) {
+  if (!node) return '';
+  if (Array.isArray(node)) return node.map((n) => adfToMarkdown(n, ctx)).join('');
+  if (typeof node !== 'object') return '';
+
+  const content = Array.isArray(node.content) ? node.content : [];
+  const inner = () => content.map((n) => adfToMarkdown(n, ctx)).join('');
+
+  switch (node.type) {
+    case 'doc':
+      return content.map((n) => adfToMarkdown(n, ctx)).join('\n');
+    case 'text':
+      return adfApplyMarks(node.text || '', node.marks);
+    case 'hardBreak':
+      return '\n';
+    case 'paragraph':
+      return `${inner()}\n`;
+    case 'heading': {
+      const level = Math.min(6, Math.max(1, (node.attrs && node.attrs.level) || 3));
+      return `${'#'.repeat(level)} ${inner().trim()}\n`;
+    }
+    case 'blockquote':
+      return inner().split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n') + '\n';
+    case 'bulletList':
+      return content.map((li) => `- ${adfToMarkdown(li, ctx).trim().replace(/\n/g, '\n  ')}`).join('\n') + '\n';
+    case 'orderedList':
+      return content.map((li, i) => `${i + 1}. ${adfToMarkdown(li, ctx).trim().replace(/\n/g, '\n   ')}`).join('\n') + '\n';
+    case 'listItem':
+      return inner();
+    case 'taskList':
+      return inner();
+    case 'taskItem':
+      return `- [${node.attrs && node.attrs.state === 'DONE' ? 'x' : ' '}] ${inner().trim()}\n`;
+    case 'codeBlock':
+      return '```' + ((node.attrs && node.attrs.language) || '') + '\n' +
+        content.map((c) => c.text || '').join('') + '\n```\n';
+    case 'rule':
+      return '\n---\n';
+    case 'media': {
+      const attrs = node.attrs || {};
+      const embed = ctx.mediaById && ctx.mediaById.get(String(attrs.id));
+      if (embed) return `\n${embed}\n`;
+      return `\n*(embedded media: ${attrs.id || 'unknown'})*\n`;
+    }
+    case 'inlineCard':
+    case 'blockCard':
+      return (node.attrs && node.attrs.url) ? `<${node.attrs.url}>` : '';
+    case 'mention':
+      return `@${(node.attrs && node.attrs.text ? node.attrs.text.replace(/^@/, '') : 'unknown')}`;
+    case 'emoji':
+      return (node.attrs && (node.attrs.text || node.attrs.shortName)) || '';
+    case 'status':
+      return `\`${(node.attrs && node.attrs.text) || ''}\``;
+    case 'date':
+      return (node.attrs && node.attrs.timestamp) ? new Date(Number(node.attrs.timestamp)).toISOString().slice(0, 10) : '';
+    case 'tableRow':
+      return '| ' + content.map((c) => adfToMarkdown(c, ctx).replace(/\s*\n+\s*/g, ' ').trim()).join(' | ') + ' |';
+    case 'table': {
+      const rows = content.map((r) => adfToMarkdown(r, ctx));
+      if (!rows.length) return '';
+      const columnCount = (content[0].content || []).length || 1;
+      const divider = '|' + ' --- |'.repeat(columnCount);
+      return [rows[0], divider, ...rows.slice(1)].join('\n') + '\n';
+    }
+    default:
+      return inner();
+  }
+}
+
+function adfFieldToMarkdown(field, ctx) {
+  if (!field) return '';
+  if (typeof field === 'string') return field.trim();
+  return adfToMarkdown(field, ctx).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function personLabel(person) {
+  if (!person) return '';
+  const name = person.displayName || person.name || person.accountId || '';
+  const email = person.emailAddress ? ` <${person.emailAddress}>` : '';
+  return `${name}${email}`.trim();
+}
+
+function renderFieldValue(value, ctx) {
+  if (value == null || value === '') return '';
+  if (Array.isArray(value)) {
+    return value.map((v) => renderFieldValue(v, ctx)).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    if (value.type === 'doc') return adfFieldToMarkdown(value, ctx);
+    if (value.displayName || value.emailAddress) return personLabel(value);
+    if (value.name) return String(value.name);
+    if (value.value) return String(value.value);
+    if (value.key) return String(value.key);
+    try {
+      const json = JSON.stringify(value);
+      return json.length > 500 ? `${json.slice(0, 500)}…` : json;
+    } catch (_err) {
+      return '';
+    }
+  }
+  return String(value);
+}
+
+function mediaEmbedMarkdown(att, relPath) {
+  const name = att.filename || `attachment-${att.id}`;
+  const mime = (att.mimeType || '').toLowerCase();
+  if (!relPath) return `\`${name}\` — not downloaded (outside the selected date range)`;
+  const href = encodeMdPath(relPath);
+  if (mime.startsWith('image/')) return `![${name}](${href})`;
+  if (mime.startsWith('video/')) {
+    return `<video src="${href}" controls width="640"></video>\n\n[▶ ${name}](${href})`;
+  }
+  return `[${name}](${href})`;
+}
+
+async function fetchFieldNameMap({ base, auth }) {
+  const map = new Map();
+  try {
+    const res = await fetch(`${base}/rest/api/3/field`, {
+      headers: { Authorization: auth, Accept: 'application/json' }
+    });
+    if (!res.ok) return map;
+    for (const field of await res.json()) {
+      if (field && field.id) map.set(field.id, field.name || field.id);
+    }
+  } catch (_err) {
+    // A missing field map only costs us pretty custom-field names.
+  }
+  return map;
+}
+
+async function fetchAllComments({ base, auth, issueKey }) {
+  const comments = [];
+  let startAt = 0;
+  for (;;) {
+    if (cancelRequested) break;
+    const url = new URL(`${base}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`);
+    url.searchParams.set('maxResults', '100');
+    url.searchParams.set('startAt', String(startAt));
+    url.searchParams.set('orderBy', 'created');
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: auth, Accept: 'application/json' }
+    });
+    if (!res.ok) break;
+
+    const data = await res.json();
+    const batch = data.comments || [];
+    comments.push(...batch);
+    startAt += batch.length;
+    if (!batch.length || startAt >= (data.total || 0)) break;
+  }
+  return comments;
+}
+
+async function fetchAllIssuesForExport({ base, auth, projects, dateFrom, send }) {
+  const issues = [];
+  let nextPageToken = undefined;
+  const projectList = projects.map((p) => `"${p}"`).join(', ');
+  let jql = `project IN (${projectList})`;
+  if (dateFrom) jql += ` AND updated >= "${dateFrom}"`;
+  jql += ' ORDER BY created ASC';
+
+  do {
+    if (cancelRequested) return { cancelled: true };
+    const url = new URL(`${base}/rest/api/3/search/jql`);
+    url.searchParams.set('jql', jql);
+    url.searchParams.set('fields', '*all');
+    url.searchParams.set('expand', 'changelog');
+    url.searchParams.set('maxResults', '50');
+    if (nextPageToken) url.searchParams.set('nextPageToken', nextPageToken);
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: auth, Accept: 'application/json' }
+    });
+    if (!res.ok) return { error: `Metadata search failed with status ${res.status}.` };
+
+    const data = await res.json();
+    issues.push(...(data.issues || []));
+    if (send) send({ type: 'status', message: `Collected metadata for ${issues.length} issue(s)…` });
+    nextPageToken = data.nextPageToken;
+  } while (nextPageToken);
+
+  return { issues };
+}
+
+const SUMMARY_FIELD_IDS = new Set([
+  'summary', 'description', 'status', 'issuetype', 'priority', 'assignee', 'reporter',
+  'creator', 'created', 'updated', 'resolutiondate', 'resolution', 'labels', 'components',
+  'fixVersions', 'versions', 'parent', 'subtasks', 'issuelinks', 'duedate', 'environment',
+  'votes', 'watches', 'project', 'attachment', 'comment', 'worklog', 'timetracking',
+  'progress', 'aggregateprogress', 'workratio', 'statuscategorychangedate', 'lastViewed',
+  'timespent', 'timeestimate', 'timeoriginalestimate', 'aggregatetimespent',
+  'aggregatetimeestimate', 'aggregatetimeoriginalestimate', 'security', 'thumbnail'
+]);
+
+async function buildMarkdownExport({ base, auth, projects, dateFrom, dateTo, attachmentPaths, send }) {
+  if (send) send({ type: 'status', message: 'Building Markdown metadata export…' });
+
+  const [fieldNames, issueResult] = await Promise.all([
+    fetchFieldNameMap({ base, auth }),
+    fetchAllIssuesForExport({ base, auth, projects, dateFrom, send })
+  ]);
+
+  if (issueResult.cancelled) return { cancelled: true };
+  if (issueResult.error) return { error: issueResult.error };
+
+  const issues = issueResult.issues;
+  const lines = [];
+
+  lines.push(`# Jira Export — ${projects.join(', ')}`);
+  lines.push('');
+  lines.push(`> Machine-readable knowledge dump intended for AI analysis. Attachments are embedded as relative links so images and videos render in a Markdown viewer.`);
+  lines.push('');
+  lines.push('| | |');
+  lines.push('| --- | --- |');
+  lines.push(`| Projects | ${mdCell(projects.join(', '))} |`);
+  lines.push(`| Generated | ${mdCell(new Date().toISOString())} |`);
+  lines.push(`| Jira site | ${mdCell(base)} |`);
+  lines.push(`| Date filter | ${mdCell(`${dateFrom || 'any start'} to ${dateTo || 'any end'}`)} |`);
+  lines.push(`| Issues exported | ${issues.length} |`);
+  lines.push('');
+
+  lines.push('## Contents');
+  lines.push('');
+  for (const issue of issues) {
+    const summary = (issue.fields && issue.fields.summary) || '';
+    lines.push(`- **${issue.key}** — ${mdCell(summary)} *(${renderFieldValue(issue.fields && issue.fields.status)})*`);
+  }
+  lines.push('');
+
+  let processed = 0;
+  for (const issue of issues) {
+    if (cancelRequested) return { cancelled: true };
+    const f = issue.fields || {};
+    const attachments = f.attachment || [];
+
+    // Map ADF media ids to embeddable markdown so inline screenshots survive.
+    const mediaById = new Map();
+    for (const att of attachments) {
+      const rel = attachmentPaths.get(String(att.id));
+      mediaById.set(String(att.id), mediaEmbedMarkdown(att, rel));
+    }
+    const ctx = { mediaById };
+
+    lines.push('---');
+    lines.push('');
+    lines.push(`## ${issue.key} — ${f.summary || '(no summary)'}`);
+    lines.push('');
+    lines.push('| Field | Value |');
+    lines.push('| --- | --- |');
+    lines.push(`| Issue key | ${mdCell(issue.key)} |`);
+    lines.push(`| URL | ${mdCell(`${base}/browse/${issue.key}`)} |`);
+    lines.push(`| Type | ${mdCell(renderFieldValue(f.issuetype, ctx))} |`);
+    lines.push(`| Status | ${mdCell(renderFieldValue(f.status, ctx))} |`);
+    lines.push(`| Status category | ${mdCell(f.status && f.status.statusCategory ? f.status.statusCategory.name : '')} |`);
+    lines.push(`| Resolution | ${mdCell(renderFieldValue(f.resolution, ctx))} |`);
+    lines.push(`| Priority | ${mdCell(renderFieldValue(f.priority, ctx))} |`);
+    lines.push(`| Assignee | ${mdCell(personLabel(f.assignee) || 'Unassigned')} |`);
+    lines.push(`| Reporter | ${mdCell(personLabel(f.reporter))} |`);
+    lines.push(`| Creator | ${mdCell(personLabel(f.creator))} |`);
+    lines.push(`| Created | ${mdCell(f.created)} |`);
+    lines.push(`| Updated | ${mdCell(f.updated)} |`);
+    lines.push(`| Resolved | ${mdCell(f.resolutiondate)} |`);
+    lines.push(`| Due date | ${mdCell(f.duedate)} |`);
+    lines.push(`| Labels | ${mdCell((f.labels || []).join(', '))} |`);
+    lines.push(`| Components | ${mdCell(renderFieldValue(f.components, ctx))} |`);
+    lines.push(`| Fix versions | ${mdCell(renderFieldValue(f.fixVersions, ctx))} |`);
+    lines.push(`| Affects versions | ${mdCell(renderFieldValue(f.versions, ctx))} |`);
+    lines.push(`| Parent | ${mdCell(f.parent ? `${f.parent.key} — ${(f.parent.fields && f.parent.fields.summary) || ''}` : '')} |`);
+    lines.push(`| Subtasks | ${mdCell((f.subtasks || []).map((s) => `${s.key} (${(s.fields && s.fields.summary) || ''})`).join('; '))} |`);
+    lines.push(`| Original estimate | ${mdCell(f.timeoriginalestimate)} |`);
+    lines.push(`| Time estimate | ${mdCell(f.timeestimate)} |`);
+    lines.push(`| Time spent | ${mdCell(f.timespent)} |`);
+    lines.push(`| Votes | ${mdCell(f.votes && f.votes.votes)} |`);
+    lines.push(`| Watchers | ${mdCell(f.watches && f.watches.watchCount)} |`);
+    lines.push(`| Attachments | ${attachments.length} |`);
+    lines.push('');
+
+    const links = (f.issuelinks || []).map((link) => {
+      const other = link.outwardIssue || link.inwardIssue;
+      if (!other) return '';
+      const rel = link.outwardIssue ? (link.type && link.type.outward) : (link.type && link.type.inward);
+      return `- ${rel || 'relates to'} **${other.key}** — ${(other.fields && other.fields.summary) || ''}`;
+    }).filter(Boolean);
+    if (links.length) {
+      lines.push('### Linked issues');
+      lines.push('');
+      lines.push(...links);
+      lines.push('');
+    }
+
+    const description = adfFieldToMarkdown(f.description, ctx);
+    lines.push('### Description');
+    lines.push('');
+    lines.push(description || '*(no description)*');
+    lines.push('');
+
+    const environment = adfFieldToMarkdown(f.environment, ctx);
+    if (environment) {
+      lines.push('### Environment');
+      lines.push('');
+      lines.push(environment);
+      lines.push('');
+    }
+
+    const customEntries = [];
+    for (const [fieldId, value] of Object.entries(f)) {
+      if (SUMMARY_FIELD_IDS.has(fieldId)) continue;
+      if (value == null || value === '' || (Array.isArray(value) && !value.length)) continue;
+      const rendered = renderFieldValue(value, ctx);
+      if (!rendered) continue;
+      customEntries.push(`- **${fieldNames.get(fieldId) || fieldId}** (\`${fieldId}\`): ${mdCell(rendered)}`);
+    }
+    if (customEntries.length) {
+      lines.push('### Other fields');
+      lines.push('');
+      lines.push(...customEntries);
+      lines.push('');
+    }
+
+    if (attachments.length) {
+      lines.push(`### Attachments (${attachments.length})`);
+      lines.push('');
+      for (const att of attachments) {
+        const rel = attachmentPaths.get(String(att.id));
+        lines.push(`#### ${att.filename || `attachment-${att.id}`}`);
+        lines.push('');
+        lines.push(`- Uploaded by: ${mdCell(personLabel(att.author))}`);
+        lines.push(`- Uploaded at: ${mdCell(att.created)}`);
+        lines.push(`- Type: ${mdCell(att.mimeType)} · Size: ${mdCell(formatBytes(att.size || 0))}`);
+        lines.push(`- Local file: ${rel ? `\`${rel}\`` : '*not downloaded*'}`);
+        lines.push('');
+        lines.push(mediaEmbedMarkdown(att, rel));
+        lines.push('');
+      }
+    }
+
+    const comments = await fetchAllComments({ base, auth, issueKey: issue.key });
+    if (comments.length) {
+      lines.push(`### Comments (${comments.length})`);
+      lines.push('');
+      comments.forEach((comment, index) => {
+        const body = adfFieldToMarkdown(comment.body, ctx);
+        lines.push(`#### Comment ${index + 1} — ${personLabel(comment.author) || 'Unknown'}`);
+        lines.push('');
+        lines.push(`*Created ${comment.created || 'unknown'}${comment.updated && comment.updated !== comment.created ? ` · Updated ${comment.updated}` : ''}${comment.updateAuthor && comment.updateAuthor.accountId !== (comment.author && comment.author.accountId) ? ` by ${personLabel(comment.updateAuthor)}` : ''}*`);
+        lines.push('');
+        lines.push(body || '*(empty comment)*');
+        lines.push('');
+      });
+    }
+
+    const worklogs = (f.worklog && f.worklog.worklogs) || [];
+    if (worklogs.length) {
+      lines.push(`### Worklog (${worklogs.length})`);
+      lines.push('');
+      for (const entry of worklogs) {
+        lines.push(`- ${mdCell(personLabel(entry.author))} · ${mdCell(entry.timeSpent)} · started ${mdCell(entry.started)}${entry.comment ? ` — ${mdCell(adfFieldToMarkdown(entry.comment, ctx))}` : ''}`);
+      }
+      lines.push('');
+    }
+
+    const histories = (issue.changelog && issue.changelog.histories) || [];
+    if (histories.length) {
+      lines.push(`### Change history (${histories.length})`);
+      lines.push('');
+      lines.push('| When | Who | Field | From | To |');
+      lines.push('| --- | --- | --- | --- | --- |');
+      for (const history of histories) {
+        for (const item of history.items || []) {
+          lines.push(`| ${mdCell(history.created)} | ${mdCell(personLabel(history.author))} | ${mdCell(item.field)} | ${mdCell(item.fromString)} | ${mdCell(item.toString)} |`);
+        }
+      }
+      lines.push('');
+    }
+
+    processed += 1;
+    if (send && processed % 5 === 0) {
+      send({ type: 'status', message: `Markdown export: ${processed}/${issues.length} issue(s) written…` });
+    }
+  }
+
+  return { markdown: lines.join('\n'), issueCount: issues.length };
+}
+
 // ---------- IPC: Test connection ----------
 
 ipcMain.handle('jira:test', async (_event, { site, email, token }) => {
@@ -820,8 +1233,18 @@ ipcMain.handle('jira:download', async (event, payload) => {
     }
 
     const total = allAttachments.length;
+    const attachmentPaths = new Map();
+
     if (total === 0) {
-      return { ok: true, total: 0, downloaded: 0, failed: 0, rootDir };
+      let markdownPath = null;
+      if (payload.generateMarkdown) {
+        const md = await buildMarkdownExport({ base, auth, projects, dateFrom, dateTo, attachmentPaths, send });
+        if (md.markdown) {
+          markdownPath = path.join(rootDir, sanitize(`${label} metadata`) + '.md');
+          await fsp.writeFile(markdownPath, md.markdown, 'utf8');
+        }
+      }
+      return { ok: true, total: 0, downloaded: 0, failed: 0, rootDir, markdownPath };
     }
 
     send({ type: 'begin', total, message: `Downloading ${total} attachment(s)…` });
@@ -853,6 +1276,7 @@ ipcMain.handle('jira:download', async (event, payload) => {
         if (!res.ok) throw new Error(`status ${res.status}`);
         const buffer = Buffer.from(await res.arrayBuffer());
         await fsp.writeFile(destPath, buffer);
+        attachmentPaths.set(String(att.id), path.relative(rootDir, destPath).split(path.sep).join('/'));
         bytes += buffer.length;
         downloaded += 1;
         send({
@@ -881,7 +1305,19 @@ ipcMain.handle('jira:download', async (event, payload) => {
       }
     }
 
-    return { ok: true, total, downloaded, failed, bytes, bytesLabel: formatBytes(bytes), rootDir };
+    let markdownPath = null;
+    if (payload.generateMarkdown && !cancelRequested) {
+      const md = await buildMarkdownExport({ base, auth, projects, dateFrom, dateTo, attachmentPaths, send });
+      if (md.error) {
+        send({ type: 'status', message: `Markdown export failed: ${md.error}` });
+      } else if (md.markdown) {
+        markdownPath = path.join(rootDir, sanitize(`${label} metadata`) + '.md');
+        await fsp.writeFile(markdownPath, md.markdown, 'utf8');
+        send({ type: 'status', message: `Markdown export written for ${md.issueCount} issue(s).` });
+      }
+    }
+
+    return { ok: true, total, downloaded, failed, bytes, bytesLabel: formatBytes(bytes), rootDir, markdownPath };
   } catch (err) {
     return { ok: false, error: err.message, rootDir };
   }
